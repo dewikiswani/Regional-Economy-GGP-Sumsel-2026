@@ -1,0 +1,463 @@
+---
+title: "Proyeksi Tabel I-O Sumatera Selatan 2020 ke 2025 dengan Metode RAS"
+format: html
+editor: visual
+---
+
+## Proyeksi Tabel I-O
+
+Dokumen ini memproyeksikan Tabel Input-Output (I-O) Provinsi Sumatera Selatan dari tahun dasar 2020 ke tahun target 2025 menggunakan metode pemutakhiran temporal RAS (*biproportional matrix balancing*). Informasi tahun target diambil dari PDRB Atas Dasar Harga Konstan (ADHK) 2010 menurut lapangan usaha. Prosedur terbagi dalam 7 section utama.
+
+**Catatan dasar harga:** Tabel I-O 2020 disusun atas dasar harga berlaku (ADHB) 2020, sedangkan PDRB disajikan atas dasar harga konstan 2010. Informasi yang diambil dari PDRB hanya indeks pertumbuhan riil (rasio 2025/2020), sehingga tabel hasil proyeksi adalah **Tabel I-O 2025 atas dasar harga konstan 2020**. Tabel ini mencerminkan perubahan volume dan struktur riil perekonomian, bukan nilai nominal 2025.
+
+### 1 Pembacaan dan Persiapan Data
+
+Ada empat hal utama yang dilakukan pada Section 1:
+
+1.  Struktur Berkas: berkas `io_sumsel_2020.csv` merupakan ekspor apa adanya dari sheet "I-O Sumsel 2020" (pemisah koma, desimal titik). Dua baris teratas (judul tabel dan baris kosong) dilewati, sehingga baris header berisi kode kolom I-O (1–54, 180, 301–305, 309, 310, 409, 509, 600, 700).
+
+2.  Standardisasi Dimensi: nama baris diseragamkan menggunakan kolom "Kode I-O", sedangkan nama kolom menggunakan kode pada header. Kolom deskripsi dan kolom tanpa kode numerik (sel catatan di luar tabel) dikeluarkan dari struktur data sebelum operasi aljabar dilakukan.
+
+3.  Tanda pemisah ribuan koma (,) dihilangkan dan sel kosong (NA) diubah menjadi 0 agar data yang dihasilkan berupa numerik murni.
+
+4.  Berkas PDRB: kode lapangan usaha (misal `A.1.c`, `C.2`, `M,N`) diekstraksi dari awal teks label, dan kolom tahun dideteksi otomatis. Dengan demikian skrip tetap berjalan bila data diperluas, misalnya menjadi 2014–2025.
+
+Data awal hasil bacaan di tahap ini disimpan dengan nama variabel **io_mat**, **io_data**, dan **pdrb_mat**.
+
+```{r}
+library(writexl)
+library(DT)
+
+file_path_io      <- "io_sumsel_2020.csv"
+file_path_pdrb    <- "pdrb_sumsel_2014_2025.csv"
+output_excel_path <- "Sumsel_2025_IO_Projection.xlsx"
+output_csv_path   <- "Sumsel_2025_IO_Table.csv"
+
+base_year   <- "2020"
+target_year <- "2025"
+
+# --- Read I-O CSV (skip title row and blank row) ---
+io_raw <- read.csv(file_path_io, skip = 2, check.names = FALSE, stringsAsFactors = FALSE)
+
+# Extract and clean account codes and descriptions
+account_codes <- trimws(as.character(io_raw[[1]]))
+account_names <- trimws(as.character(io_raw[[2]]))
+
+# Remove blank rows and keep only columns with numeric I-O codes
+valid_rows <- !is.na(account_codes) & account_codes != ""
+valid_cols <- grepl("^[0-9]+$", trimws(colnames(io_raw)))
+
+io_data <- io_raw[valid_rows, valid_cols]
+account_codes <- account_codes[valid_rows]
+account_names <- account_names[valid_rows]
+col_codes     <- trimws(colnames(io_data))
+
+# Convert numeric values (handling commas if present)
+io_mat <- as.matrix(io_data)
+io_mat <- apply(io_mat, 2, function(x) as.numeric(gsub(",", "", x)))
+io_mat[is.na(io_mat)] <- 0
+
+rownames(io_mat) <- account_codes
+colnames(io_mat) <- col_codes
+rownames(io_data) <- account_codes
+
+# --- Read PDRB ADHK CSV ---
+pdrb_raw <- read.csv(file_path_pdrb, check.names = FALSE, stringsAsFactors = FALSE)
+
+# Extract PDRB codes from label prefix (e.g. "A.1.c Tanaman Perkebunan" -> "A.1.c")
+pdrb_labels <- trimws(as.character(pdrb_raw[[1]]))
+pdrb_codes  <- sub("\\.$", "", sub(" .*$", "", pdrb_labels))
+
+# Detect year columns dynamically
+year_cols <- colnames(pdrb_raw)[grepl("^[0-9]{4}$", trimws(colnames(pdrb_raw)))]
+
+pdrb_mat <- as.matrix(pdrb_raw[, year_cols])
+pdrb_mat <- apply(pdrb_mat, 2, function(x) as.numeric(gsub(",", "", x)))
+pdrb_mat[is.na(pdrb_mat)] <- 0
+
+rownames(pdrb_mat) <- pdrb_codes
+colnames(pdrb_mat) <- trimws(year_cols)
+
+datatable(
+  io_data,
+  options = list(
+    scrollX = TRUE,
+    scrollY = '400px', # Enables horizontal scrolling for wide tables
+    pageLength = 10,        # Controls rows per page
+    autoWidth = TRUE,
+    dom = 'ftip'            # Controls UI layout (Filter, Table, Info, Pagination)
+  ),
+  filter = 'top',           # Adds column-wise filter boxes
+  rownames = TRUE,
+  class = 'cell-border stripe hover',
+  caption = htmltools::tags$caption(
+    style = 'caption-side: top; text-align: center; color: black; font-size: 20px; font-weight: bold;',
+    'Tabel I-O Sumatera Selatan 2020 (Juta Rupiah)')
+)
+
+```
+
+### 2 Standarisasi Data
+
+Tabel I-O BPS mengikuti konvensi kode baris dan kolom yang baku:
+
+-   Baris 1–54 dan kolom 1–54 (Sektor): sektor produksi domestik. Kode ini muncul sekaligus pada baris dan kolom, sehingga dapat diidentifikasi sebagai irisan kode baris dan kode kolom.
+
+-   Baris 190, 200 (Input Antara): total input antara domestik dan input antara impor.
+
+-   Baris 201–204 (Nilai Tambah Bruto): 201 kompensasi tenaga kerja, 202 surplus usaha bruto (termasuk pendapatan campuran), 203 pajak lainnya atas produksi, 204 subsidi lainnya atas produksi. Baris 209 adalah total NTB dan 210 total input.
+
+-   Kolom 180, 301–305, 309, 600 (Permintaan): 180 total permintaan antara; 301 konsumsi rumah tangga (termasuk LNPRT), 302 konsumsi pemerintah, 303 PMTB, 304 perubahan inventori, 305 ekspor; 309 total permintaan akhir; 600 total output.
+
+Kolom 304 (perubahan inventori) adalah satu-satunya kolom yang memuat nilai negatif. Karena algoritma RAS hanya terdefinisi untuk matriks non-negatif, kolom ini diperlakukan sebagai eksogen (tidak ikut diseimbangkan).
+
+Pencocokan awalan kode (`startsWith`) digunakan agar skrip tetap konsisten bila struktur kolom permintaan akhir berbeda pada rilis tabel yang lain. Syarat panjang kode tiga digit (`nchar == 3`) ditambahkan agar kode sektor seperti 20 dan 30 tidak ikut terpilih sebagai akun NTB atau permintaan akhir.
+
+**Konkordansi Sektor:** PDRB menyajikan 52 lapangan usaha, sedangkan Tabel I-O memuat 54 sektor. Selisih dua sektor berasal dari rincian subsektor perkebunan: sektor I-O 3 (Karet), 4 (Kelapa Sawit), dan 5 (Tanaman Perkebunan Lainnya) seluruhnya dipetakan ke `A.1.c Tanaman Perkebunan`, sehingga ketiganya menggunakan indeks pertumbuhan yang sama. Sebanyak 51 sektor lainnya berpasangan satu-satu.
+
+```{r}
+# Dynamic Account Identification by Code Pattern ---
+sec_codes    <- account_codes[account_codes %in% col_codes]                       # 1..54
+fd_codes     <- col_codes[nchar(col_codes) == 3 & startsWith(col_codes, "30") & col_codes != "309"]  # 301..305
+inv_code     <- "304"                                                            # Change in inventories (contains negatives)
+fd_ras_codes <- setdiff(fd_codes, inv_code)                                      # FD columns entering RAS
+out_code     <- "600"
+imp_code     <- "200"
+va_codes     <- account_codes[nchar(account_codes) == 3 & startsWith(account_codes, "20") & !account_codes %in% c("200", "209")]  # 201..204
+
+sec_names <- account_names[match(sec_codes, account_codes)]
+
+# --- Sector Concordance: I-O (54) -> PDRB (52) ---
+io_to_pdrb <- c(
+  "A.1.a", "A.1.b", "A.1.c", "A.1.c", "A.1.c", "A.1.d", "A.1.e", "A.2", "A.3",
+  "B.1", "B.2", "B.3", "B.4",
+  paste0("C.", 1:16),
+  "D.1", "D.2", "E", "F", "G.1", "G.2",
+  paste0("H.", 1:6),
+  "I.1", "I.2", "J",
+  paste0("K.", 1:4),
+  "L", "M,N", "O", "P", "Q", "R,S,T,U"
+)
+
+stopifnot(length(io_to_pdrb) == length(sec_codes))
+stopifnot(all(io_to_pdrb %in% rownames(pdrb_mat)))
+stopifnot(all(c(base_year, target_year) %in% colnames(pdrb_mat)))
+names(io_to_pdrb) <- sec_codes
+
+concordance <- data.frame(
+  Kode_IO   = sec_codes,
+  Sektor_IO = sec_names,
+  Kode_PDRB = io_to_pdrb,
+  Label_PDRB = pdrb_labels[match(io_to_pdrb, pdrb_codes)],
+  check.names = FALSE
+)
+
+```
+
+### 3 Ekstraksi Blok I-O 2020 dan Koefisien Teknis
+
+Seluruh blok tabel dasar 2020 diekstraksi dari **io_mat**:
+
+-   Matriks Transaksi Antara Domestik ($Z_0$): transaksi barang dan jasa domestik sektor $i$ yang digunakan sebagai input antara oleh sektor $j$.
+
+-   Vektor Output ($X_0$), Input Antara Impor ($M_0$), Nilai Tambah Bruto ($VA_0$, penjumlahan baris 201–204), serta Permintaan Akhir domestik ($F_0$).
+
+-   Verifikasi Keseimbangan Tahun Dasar: pada setiap sektor harus berlaku $$X_j = \sum_i z_{ij} + M_j + VA_j \quad \text{(sisi input)}, \qquad X_i = \sum_j z_{ij} + \sum_k f_{ik} \quad \text{(sisi output)}$$
+
+Matriks Koefisien Teknis tahun dasar menjadi titik awal (*prior*) algoritma RAS: $$A_0 = Z_0 \hat{X}_0^{-1}, \quad \text{dengan } a_{ij} = \frac{z_{ij}}{X_j}$$
+
+Selain itu dihitung rasio input primer per sektor, yaitu rasio NTB $\rho_j = VA_j / X_j$ dan rasio impor antara $\mu_j = M_j / X_j$. Sektor dengan output nol (Pertambangan Bijih Logam) diberi koefisien nol untuk menghindari pembagian dengan nol.
+
+```{r}
+# Extract 2020 Blocks
+Z_0       <- io_mat[sec_codes, sec_codes]                  # Domestic intermediate transactions
+X_0       <- io_mat[sec_codes, out_code]                   # Total output
+M_0       <- io_mat[imp_code, sec_codes]                   # Imported intermediate inputs
+VA_comp_0 <- io_mat[va_codes, sec_codes, drop = FALSE]     # Value added components
+VA_0      <- colSums(VA_comp_0)                            # Gross value added (NTB)
+FD_0      <- io_mat[sec_codes, fd_codes]                   # Domestic final demand
+M_FD_0    <- io_mat[imp_code, fd_codes]                    # Imports for final demand
+
+# Base-year balance check
+Total_Input_0  <- colSums(Z_0) + M_0 + VA_0
+Total_Output_0 <- rowSums(Z_0) + rowSums(FD_0)
+cat("2020 max |Total Input - X| :", max(abs(Total_Input_0 - X_0)), "\n")
+cat("2020 max |Total Output - X|:", max(abs(Total_Output_0 - X_0)), "\n")
+
+# Technical coefficients: A_0 = Z_0 * diag(1/X_0)
+inv_X_0 <- ifelse(X_0 > 0, 1 / X_0, 0)
+A_0 <- Z_0 %*% diag(inv_X_0)
+rownames(A_0) <- sec_codes
+colnames(A_0) <- sec_codes
+
+# Primary input ratios
+va_ratio_0  <- VA_0 * inv_X_0     # rho_j = VA_j / X_j
+imp_ratio_0 <- M_0 * inv_X_0      # mu_j  = M_j / X_j
+```
+
+### 4 Target Marjin 2025 dari PDRB ADHK
+
+Indeks pertumbuhan riil setiap sektor dihitung dari PDRB ADHK: $$g_j = \frac{PDRB_{j,2025}}{PDRB_{j,2020}}$$
+
+Karena tahun target 2025 tersedia langsung pada data PDRB, rasio output terhadap NTB tidak perlu diestimasi dari tren historis. Rasio tahun dasar dipertahankan (asumsi teknologi input primer tetap), sehingga marjin 2025 diturunkan sebagai berikut:
+
+-   Nilai Tambah: $VA_{j,2025} = g_j \, VA_{j,2020}$. Komponen NTB (201–204) bergerak proporsional mengikuti pangsa 2020.
+
+-   Output: $X_{j,2025} = VA_{j,2025} / \rho_j$.
+
+-   Impor Antara: $M_{j,2025} = \mu_j \, X_{j,2025}$.
+
+-   Target Kolom Input Antara Domestik: $v_j = X_{j,2025} - VA_{j,2025} - M_{j,2025}$.
+
+-   Target Baris: $u_i = X_{i,2025} - INV_{i,2025}$, dengan perubahan inventori $INV_{i,2025} = g_i \, INV_{i,2020}$ (eksogen).
+
+-   Target Kolom Permintaan Akhir ($f_k$): baris permintaan akhir 2020 diskalakan dengan $g_i$, lalu disesuaikan dengan skalar penutup $\lambda$ agar total target baris sama dengan total target kolom (syarat keberadaan solusi RAS): $$\lambda = \frac{\sum_i u_i - \sum_j v_j}{\sum_i \sum_k g_i \, F_{ik,2020}}, \qquad f_k = \lambda \sum_i g_i \, F_{ik,2020}$$
+
+Permintaan akhir ikut diseimbangkan di dalam RAS, bukan ditetapkan sebagai residual tetap. Sebagian sektor (misalnya Administrasi Pemerintahan) hampir tidak memiliki penjualan antara. Jika permintaan akhirnya dipatok di luar RAS, target baris $Z$ untuk sektor tersebut menjadi tidak konsisten dan algoritma tidak dapat konvergen.
+
+Laju pertumbuhan tahunan rata-rata (CAGR) $\left(g_j^{1/(2025-2020)} - 1\right)$ juga dihitung sebagai informasi pendukung.
+
+```{r}
+# Sectoral real growth index from PDRB ADHK
+g_pdrb <- pdrb_mat[, target_year] / pdrb_mat[, base_year]
+g_sec  <- g_pdrb[io_to_pdrb]
+g_sec[!is.finite(g_sec)] <- 1          # Zero-output sectors (e.g. B.3) keep index 1
+names(g_sec) <- sec_codes
+
+n_year   <- as.numeric(target_year) - as.numeric(base_year)
+cagr_sec <- g_sec^(1 / n_year) - 1
+
+# 2025 primary margins
+VA_1      <- VA_0 * g_sec
+X_1       <- ifelse(va_ratio_0 > 0, VA_1 / va_ratio_0, X_0 * g_sec)
+M_1       <- imp_ratio_0 * X_1
+VA_comp_1 <- VA_comp_0 %*% diag(g_sec)
+rownames(VA_comp_1) <- va_codes
+colnames(VA_comp_1) <- sec_codes
+
+# Exogenous change in inventories
+INV_1 <- FD_0[, inv_code] * g_sec
+
+# RAS targets
+row_target   <- X_1 - INV_1                               # u: Z row + FD (non-inventory)
+col_target_Z <- X_1 - VA_1 - M_1                          # v: domestic intermediate inputs
+
+FD_prior      <- diag(g_sec) %*% FD_0[, fd_ras_codes]     # FD rows scaled by sector growth
+rownames(FD_prior) <- sec_codes
+colnames(FD_prior) <- fd_ras_codes
+
+lambda_fd     <- (sum(row_target) - sum(col_target_Z)) / sum(FD_prior)
+col_target_FD <- colSums(FD_prior) * lambda_fd            # f: FD column totals
+
+# Imports for final demand follow FD column growth
+fd_growth <- c(
+  ifelse(colSums(FD_0[, fd_ras_codes]) > 0, col_target_FD / colSums(FD_0[, fd_ras_codes]), 1),
+  setNames(ifelse(sum(FD_0[, inv_code]) != 0, sum(INV_1) / sum(FD_0[, inv_code]), 1), inv_code)
+)
+M_FD_1 <- M_FD_0 * fd_growth[fd_codes]
+
+# Feasibility checks
+stopifnot(all(row_target >= 0), all(col_target_Z >= 0), all(col_target_FD >= 0))
+cat("FD closure scalar (lambda):", round(lambda_fd, 6), "\n")
+cat("Aggregate NTB growth (I-O weights):", round(sum(VA_1) / sum(VA_0), 6), "\n")
+cat("Aggregate PDRB growth (ADHK)      :", round(pdrb_mat["Produk", target_year] / pdrb_mat["Produk", base_year], 6), "\n")
+```
+
+### 5 Algoritma RAS
+
+Metode RAS (Stone, 1961; Bacharach, 1970; Miller & Blair, 2009, Bab 7) mencari matriks baru yang sedekat mungkin dengan struktur tahun dasar namun memenuhi marjin baris dan kolom tahun target. Matriks yang diseimbangkan adalah matriks gabungan $T = [\,Z \mid F\,]$ (transaksi antara dan permintaan akhir non-inventori).
+
+-   Prior: koefisien teknis 2020 diterapkan pada output 2025, dan permintaan akhir 2020 diskalakan dengan pertumbuhan sektor: $$T^{(0)} = \left[\, A_0 \hat{X}_{2025} \;\middle|\; \hat{g} F^{*}_{2020} \,\right]$$
+
+-   Langkah R (penyesuaian baris): $$r_i = \frac{u_i}{\sum_j t_{ij}}, \qquad T \leftarrow \hat{r} \, T$$
+
+-   Langkah S (penyesuaian kolom): $$s_j = \frac{[v, f]_j}{\sum_i t_{ij}}, \qquad T \leftarrow T \, \hat{s}$$
+
+-   Kriteria Konvergensi: iterasi dihentikan bila $$\max\left( \left|T\mathbf{1} - u\right|, \; \left|\mathbf{1}^\top T - [v, f]\right| \right) < \varepsilon$$
+
+Hasil akhir setara dengan $Z_{2025} = \hat{R} \, A_0 \hat{X}_{2025} \, \hat{S}$, sehingga koefisien teknis 2025 adalah $A_{2025} = \hat{R} A_0 \hat{S}_Z$. Efek substitusi ditangkap oleh $\hat{R}$ (baris), sedangkan efek fabrikasi ditangkap oleh $\hat{S}$ (kolom). Baris atau kolom dengan jumlah nol (sektor Bijih Logam) diberi faktor 1 sehingga tetap bernilai nol.
+
+```{r}
+# --- Build Prior Matrix ---
+T_prior <- cbind(A_0 %*% diag(X_1), FD_prior)
+rownames(T_prior) <- sec_codes
+colnames(T_prior) <- c(sec_codes, fd_ras_codes)
+
+u_target <- row_target
+v_target <- c(col_target_Z, col_target_FD)
+
+# Feasibility: positive target requires a non-zero prior row/column
+stopifnot(all(u_target[rowSums(T_prior) == 0] == 0))
+stopifnot(all(v_target[colSums(T_prior) == 0] == 0))
+
+# --- RAS Iteration ---
+tol      <- 1e-6      # Juta Rupiah
+max_iter <- 10000
+iter     <- 0
+gap      <- Inf
+T_ras    <- T_prior
+
+while (gap > tol && iter < max_iter) {
+  iter <- iter + 1
+
+  # R step: row scaling
+  row_sum <- rowSums(T_ras)
+  r_fac   <- ifelse(row_sum > 0, u_target / row_sum, 1)
+  T_ras   <- diag(r_fac) %*% T_ras
+
+  # S step: column scaling
+  col_sum <- colSums(T_ras)
+  s_fac   <- ifelse(col_sum > 0, v_target / col_sum, 1)
+  T_ras   <- T_ras %*% diag(s_fac)
+
+  gap <- max(abs(rowSums(T_ras) - u_target), abs(colSums(T_ras) - v_target))
+}
+
+rownames(T_ras) <- sec_codes
+colnames(T_ras) <- c(sec_codes, fd_ras_codes)
+
+if (gap > tol) warning("RAS did not converge within max_iter")
+cat("RAS iterations:", iter, "| max margin gap:", format(gap, scientific = TRUE), "\n")
+
+# Split balanced blocks
+Z_1  <- T_ras[, sec_codes]
+FD_1 <- cbind(T_ras[, fd_ras_codes], INV_1)
+colnames(FD_1) <- c(fd_ras_codes, inv_code)
+FD_1 <- FD_1[, fd_codes]
+```
+
+### 6 Konstruksi Tabel I-O 2025 dan Verifikasi Keseimbangan
+
+-   Matriks Transaksi Antara ($Z_{2025}$) dan Permintaan Akhir ($F_{2025}$): diperoleh langsung dari hasil RAS, ditambah kolom perubahan inventori eksogen.
+
+-   Blok Input Primer: input antara impor $M_{2025}$ dan komponen NTB 201–204 dari Section 4.
+
+-   Verifikasi Keseimbangan Akuntansi (Row-Column Balancing): memastikan bahwa pada setiap sektor berlaku $$\text{Total Input}_j = \sum_i z_{ij} + M_j + VA_j \; = \; \sum_j z_{ij} + \sum_k f_{ik} = \text{Total Output}_j$$
+
+-   Matriks Koefisien Teknis $A_{2025} = Z_{2025}\hat{X}_{2025}^{-1}$ dan Pengganda Leontief $L_{2025} = (I - A_{2025})^{-1}$.
+
+Susunan tabel dipertahankan sama dengan tabel asli BPS: 54 sektor, kolom 1–54, 180, 301–305, 309, 310, 409, 509, 600, 700 serta baris 1–54, 190, 200, 201–204, 209, 210. Kolom 310 adalah total permintaan, 409 total impor (hanya terisi pada baris 200), 509 margin (nol pada tabel transaksi domestik atas dasar harga produsen), dan 700 total penyediaan.
+
+```{r}
+# --- Build Full I-O Table 2025 ---
+  Total_Interm_Demand <- rowSums(Z_1)                         # 180
+  Total_Final_Demand  <- rowSums(FD_1)                        # 309
+  Total_Gross_Output  <- Total_Interm_Demand + Total_Final_Demand   # 600
+  Total_Gross_Input   <- colSums(Z_1) + M_1 + colSums(VA_comp_1)    # 210
+
+  Total_Demand        <- Total_Interm_Demand + Total_Final_Demand   # 310
+  Total_Imports       <- sum(M_1) + sum(M_FD_1)                     # 409 (row 200 only)
+
+  # Keep the full BPS column set: 1..54, 180, 301..305, 309, 310, 409, 509, 600, 700
+  top_block <- cbind(Z_1, "180" = Total_Interm_Demand, FD_1,
+                     "309" = Total_Final_Demand, "310" = Total_Demand,
+                     "409" = 0, "509" = 0,
+                     "600" = Total_Gross_Output, "700" = Total_Gross_Output)
+
+  # Intermediate input totals and imports (with FD columns)
+  row_190 <- c(colSums(Z_1), sum(Z_1), colSums(FD_1), sum(FD_1), sum(Total_Demand),
+               0, 0, sum(Total_Gross_Output), sum(Total_Gross_Output))
+  row_200 <- c(M_1, sum(M_1), M_FD_1, sum(M_FD_1), Total_Imports,
+               Total_Imports, 0, 0, Total_Imports)
+
+  # Value added rows (FD columns set to 0, as in BPS layout)
+  n_fd_extra <- ncol(FD_1) + 6
+  va_rows <- cbind(VA_comp_1, rowSums(VA_comp_1), matrix(0, nrow = nrow(VA_comp_1), ncol = n_fd_extra))
+  row_209 <- c(colSums(VA_comp_1), sum(VA_comp_1), rep(0, n_fd_extra))
+  row_210 <- c(Total_Gross_Input, sum(Total_Gross_Input), rep(NA, n_fd_extra))
+
+  bottom_block <- rbind("190" = row_190, "200" = row_200, va_rows, "209" = row_209, "210" = row_210)
+  rownames(bottom_block) <- c("190", "200", va_codes, "209", "210")
+  colnames(bottom_block) <- colnames(top_block)
+
+  io_table <- rbind(top_block, bottom_block)
+
+  # Row descriptions from the base table
+  io_desc <- account_names[match(rownames(io_table), account_codes)]
+
+  # --- Balance Verification ---
+  balance_check <- data.frame(
+    Kode         = sec_codes,
+    Sektor       = sec_names,
+    Total_Input  = Total_Gross_Input,
+    Total_Output = Total_Gross_Output,
+    Selisih      = Total_Gross_Input - Total_Gross_Output,
+    check.names  = FALSE
+  )
+  max_imbalance <- max(abs(balance_check$Selisih))
+  cat("2025 max |Total Input - Total Output|:", format(max_imbalance, scientific = TRUE), "\n")
+  stopifnot(max_imbalance < 1e-3)
+
+  # --- Technical Coefficients and Leontief Inverse 2025 ---
+  inv_X_1 <- ifelse(Total_Gross_Output > 0, 1 / Total_Gross_Output, 0)
+  A_1 <- Z_1 %*% diag(inv_X_1)
+  rownames(A_1) <- sec_codes
+  colnames(A_1) <- sec_codes
+
+  I_mat <- diag(nrow(A_1))
+  L_1   <- solve(I_mat - A_1)
+  rownames(L_1) <- sec_codes
+  colnames(L_1) <- sec_codes
+
+  # --- Margin Summary per Sector ---
+  margins_check <- data.frame(
+    Kode           = sec_codes,
+    Sektor         = sec_names,
+    Kode_PDRB      = io_to_pdrb,
+    Growth_Index   = round(g_sec, 6),
+    CAGR           = round(cagr_sec, 6),
+    X_2020         = X_0,
+    X_2025         = Total_Gross_Output,
+    VA_2020        = VA_0,
+    VA_2025        = VA_1,
+    Row_Target     = u_target,
+    Row_Achieved   = rowSums(T_ras),
+    Col_Target_Z   = col_target_Z,
+    Col_Achieved_Z = colSums(Z_1),
+    check.names    = FALSE
+  )
+
+datatable(
+  data.frame(Deskripsi = io_desc, round(io_table, 2), check.names = FALSE),
+  options = list(
+    scrollX = TRUE,
+    scrollY = '400px',
+    pageLength = 10,
+    autoWidth = TRUE,
+    dom = 'ftip'
+  ),
+  filter = 'top',
+  rownames = TRUE,
+  class = 'cell-border stripe hover',
+  caption = htmltools::tags$caption(
+    style = 'caption-side: top; text-align: center; color: black; font-size: 20px; font-weight: bold;',
+    'Proyeksi Tabel I-O Sumatera Selatan 2025 (Juta Rupiah, Harga Konstan 2020)')
+)
+```
+
+### 7 Export to Excel and CSV
+
+```{r}
+# --- Export to Excel and CSV if paths are provided ---
+  io_export <- data.frame(Kode = rownames(io_table), Deskripsi = io_desc,
+                          round(io_table, 4), check.names = FALSE)
+
+  if (!is.null(output_excel_path)) {
+    sheets <- list(
+      "IO_Table_2025"           = io_export,
+      "Technical_Coeffs_A_2025" = data.frame(Sector = rownames(A_1), round(A_1, 6), check.names = FALSE),
+      "Technical_Coeffs_A_2020" = data.frame(Sector = rownames(A_0), round(A_0, 6), check.names = FALSE),
+      "Leontief_Inverse_L_2025" = data.frame(Sector = rownames(L_1), round(L_1, 6), check.names = FALSE),
+      "Margins_Check"           = margins_check,
+      "Balance_Check"           = balance_check,
+      "Concordance"             = concordance
+    )
+    write_xlsx(sheets, path = output_excel_path)
+    cat("Successfully exported to:", output_excel_path, "\n")
+  }
+
+  if (!is.null(output_csv_path)) {
+    write.csv(io_export, output_csv_path, row.names = FALSE, na = "")
+    cat("Successfully exported to:", output_csv_path, "\n")
+  }
+```
