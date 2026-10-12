@@ -1,85 +1,416 @@
 ---
-title: "Proyeksi Tabel I-O Sumatera Selatan 2020 ke 2025 dengan Metode RAS"
+title: "Proyeksi Tabel I-O Sumatera Selatan 2020 ke 2025 dengan Metode RAS serta Proyeksi Tenaga Kerja Sektoral 2025 [Land4Lives]"
 format: html
 editor: visual
 ---
 
-## Proyeksi Tabel I-O
+## Proyeksi Tabel I-O dan Tenaga Kerja
 
-Dokumen ini memproyeksikan Tabel Input-Output (I-O) Provinsi Sumatera Selatan dari tahun dasar 2020 ke tahun target 2025 menggunakan metode pemutakhiran temporal RAS (*biproportional matrix balancing*). Informasi tahun target diambil dari PDRB Atas Dasar Harga Konstan (ADHK) 2010 menurut lapangan usaha. Prosedur terbagi dalam 7 section utama.
+Dokumen ini memproyeksikan Tabel Input-Output (I-O) Provinsi Sumatera Selatan dari tahun dasar 2020 ke tahun target 2025 menggunakan metode pemutakhiran temporal RAS (*biproportional matrix balancing*), kemudian menghitung proyeksi tenaga kerja (TK) sektoral 2025. Informasi tahun target diambil dari PDRB Atas Dasar Harga Konstan (ADHK) 2010 menurut lapangan usaha. Prosedur terbagi dalam 9 section (Section 0–8).
 
 **Catatan dasar harga:** Tabel I-O 2020 disusun atas dasar harga berlaku (ADHB) 2020, sedangkan PDRB disajikan atas dasar harga konstan 2010. Informasi yang diambil dari PDRB hanya indeks pertumbuhan riil (rasio 2025/2020), sehingga tabel hasil proyeksi adalah **Tabel I-O 2025 atas dasar harga konstan 2020**. Tabel ini mencerminkan perubahan volume dan struktur riil perekonomian, bukan nilai nominal 2025.
+
+**Catatan pertumbuhan sektoral:** seluruh sektor diproyeksikan dengan indeks pertumbuhan PDRB ADHK masing-masing. Tidak ada pembagian sektor *constrained* / *unconstrained*; kolom tersebut pada berkas deskripsi sektor sengaja dikosongkan karena tidak digunakan dalam proyeksi ini.
+
+### 0 Restrukturisasi Data Mentah 2020
+
+Berkas mentah `Tabel_input_output_2020_dan_estimasi_tenaga_kerja_2020.xlsx` terdiri atas dua sheet: "I-O Sumsel 2020" (54 sektor BPS, juta rupiah) dan "Estimasi Tenga Kerja" (perkiraan TK 2020 per sektor). Section ini mengubah keduanya menjadi format standar yang dipakai pada section berikutnya:
+
+1.  **Tabel I-O → `io_sumsel_2020.csv`**, mengikuti format berkas contoh `io`:
+
+    -   Header berada pada baris pertama (baris judul, baris kosong, kolom tanpa kode, dan sel catatan di luar tabel dibuang).
+    -   Lima kolom deskriptif: `Kode I-O`, `Nama Sektor`, `Kode sektor KSM`, `Klasifikasi Sektor Makro (KSM)`, `KSM (17 Sektor)`. Kode KSM mengikuti konkordansi I-O → PDRB; nama KSM dan KSM 17 sektor diambil langsung dari label berkas PDRB.
+    -   Sektor 55 "Sektor lain yang tidak jelas batasannya" ditambahkan sebagai baris dan kolom bernilai nol (padanan sektor terakhir pada format contoh).
+    -   Baris disesuaikan dengan kode format contoh: 190 Jumlah Input Antara Domestik; 195 Pajak Dikurang Subsidi Atas Produk (nol, karena tabel mentah adalah transaksi domestik atas dasar harga produsen); 200 Total Konsumsi Antara Impor; 201 Kompensasi Tenaga Kerja; 202 Surplus Usaha Bruto; 203 Pajak Dikurang Subsidi Lainnya Atas Produksi (= baris mentah 203 dikurangi subsidi 204); 209 Total Input Primer; 210 Total Input.
+    -   Nilai sel transaksi (Z, F, impor, komponen NTB) disalin apa adanya dengan presisi penuh; seluruh baris dan kolom jumlah (180, 309, 310, 600, 700, 190, 209, 210) dihitung ulang dari komponennya sehingga tabel konsisten secara aritmetik.
+
+2.  **TK 2020 → `DeskripsiSektor_Sumsel.xlsx`**, mengikuti format berkas `DeskripsiSektor`: `KodeSektor`, `NamaSektor`, `NamaPendek`, `NamaSingkat`, `KSM`, `Constrained`, `Unconstrained`, `RateUnconstrained` (dikosongkan), `TenagaKerja`. TK dibulatkan ke orang utuh dengan metode sisa terbesar (*largest remainder*) sehingga total tetap sama dengan total berkas mentah yang dibulatkan.
+
+```{r, restrukturisasi, echo = FALSE, warning = FALSE, message = FALSE}
+library(readxl)
+library(writexl)
+library(DT)
+
+# --- Paths ---
+file_path_raw     <- "Tabel input output 2020 dan estimasi tenaga kerja 2020.xlsx"
+sheet_io_raw      <- "I-O Sumsel 2020"
+sheet_tk_raw      <- "Estimasi Tenga Kerja"
+file_path_io      <- "io_sumsel_2020.csv"              # Restructured I-O 2020 (io template format)
+file_path_desk    <- "DeskripsiSektor_Sumsel.xlsx"     # Sector description + TK 2020
+file_path_pdrb    <- "pdrb_sumsel_2014_2025.csv"
+output_excel_path <- "Sumsel_2025_IO_Projection.xlsx"
+output_csv_path   <- "Sumsel_2025_IO_Table.csv"        # I-O 2025 in the same io template format
+output_desk_2025  <- "DeskripsiSektor_Sumsel_2025.xlsx" # Sector description + TK 2025
+
+base_year   <- "2020"
+target_year <- "2025"
+
+# Extra zero sector (counterpart of the last sector in the io template)
+extra_code <- "55"
+extra_name <- "Sektor lain yang tidak jelas batasannya"
+extra_ksm  <- "R,S,T,U"
+
+# ---------------------------------------------------------------------------
+# Helper functions (also used in later sections)
+# ---------------------------------------------------------------------------
+clean_txt <- function(x) gsub("\\s+", " ", trimws(as.character(x)))
+
+to_num <- function(x) suppressWarnings(as.numeric(gsub(",", "", clean_txt(x))))
+
+# Read PDRB ADHK: codes from the label prefix ("A.1.c Tanaman Perkebunan" -> "A.1.c"),
+# names after the code, year columns detected automatically
+read_pdrb <- function(path) {
+  raw    <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+  labels <- clean_txt(raw[[1]])
+  codes  <- sub("\\.$", "", sub(" .*$", "", labels))
+  names_ <- clean_txt(sub("^\\S+\\s+", "", labels))
+  ycols  <- names(raw)[grepl("^[0-9]{4}$", trimws(names(raw)))]
+  mat    <- sapply(raw[ycols], to_num)
+  mat[is.na(mat)] <- 0
+  rownames(mat) <- codes
+  colnames(mat) <- trimws(ycols)
+  top <- grepl("^[A-Z](,[A-Z])*$", codes)          # 17 top-level categories (A, B, ..., M,N, R,S,T,U)
+  list(labels = labels, codes = codes, names = setNames(names_, codes), mat = mat, top_codes = codes[top])
+}
+
+# Round to whole numbers while keeping the rounded total (largest remainder method)
+round_preserve <- function(x) {
+  x[is.na(x)] <- 0
+  fl  <- floor(x)
+  r   <- round(sum(x)) - sum(fl)
+  idx <- order(x - fl, decreasing = TRUE)[seq_len(max(r, 0))]
+  fl[idx] <- fl[idx] + 1
+  fl
+}
+
+# Build an I-O table in the io template layout.
+# Rows: sectors, 190, 195, 200, 201..203, 209, 210
+# Cols: sectors, 180, 301..305, 309, 310, 409, 509, 600, 700
+# Blank cells of the template are NA.
+build_io_table <- function(Z, FD, TP_sec, TP_fd, M_sec, M_fd, VA_comp) {
+  sec <- rownames(Z)
+  fd  <- colnames(FD)
+  n_fd <- length(fd)
+
+  t180 <- rowSums(Z)
+  t309 <- rowSums(FD)
+  t310 <- t180 + t309
+
+  top <- cbind(Z, "180" = t180, FD, "309" = t309, "310" = t310,
+               "409" = 0, "509" = 0, "600" = t310, "700" = t310)
+
+  na4 <- rep(NA, 4)
+  row_190 <- c(colSums(Z), sum(Z), colSums(FD), sum(FD), sum(t310), 0, 0, sum(t310), sum(t310))
+  row_195 <- c(TP_sec, sum(TP_sec), TP_fd, sum(TP_fd), sum(TP_sec) + sum(TP_fd), na4)
+  row_200 <- c(M_sec, sum(M_sec), M_fd, sum(M_fd), sum(M_sec) + sum(M_fd), na4)
+
+  na_fd <- rep(NA, n_fd + 6)                            # 301..305, 309, 310, 409, 509, 600, 700
+  va_rows <- cbind(VA_comp, rowSums(VA_comp), matrix(NA, nrow(VA_comp), n_fd + 6))
+  row_209 <- c(colSums(VA_comp), sum(VA_comp), na_fd)
+  tot_in  <- colSums(Z) + TP_sec + M_sec + colSums(VA_comp)
+  row_210 <- c(tot_in, sum(tot_in), na_fd)
+
+  bottom <- rbind(row_190, row_195, row_200, va_rows, row_209, row_210)
+  rownames(bottom) <- c("190", "195", "200", rownames(VA_comp), "209", "210")
+  colnames(bottom) <- colnames(top)
+
+  out <- rbind(top, bottom)
+  storage.mode(out) <- "double"
+  out
+}
+
+# Row labels of the io template
+io_row_labels <- c(
+  "190" = "Jumlah Input Antara Domestik",
+  "195" = "Pajak Dikurang Subsidi Atas Produk",
+  "200" = "Total Konsumsi Antara Impor",
+  "201" = "Kompensasi Tenaga Kerja",
+  "202" = "Surplus Usaha Bruto",
+  "203" = "Pajak Dikurang Subsidi Lainnya Atas Produksi",
+  "209" = "Total Input Primer",
+  "210" = "Total Input"
+)
+
+# Exact header of the five descriptive columns in the io template
+io_desc_header <- c("Kode I-O", "Nama Sektor", " Kode sektor KSM ",
+                    " Klasifikasi Sektor Makro (KSM) ", " KSM (17 Sektor) ")
+
+# Write an I-O table in the io template style (quotes only where needed, blanks for NA)
+write_io_csv <- function(tbl, desc, path) {
+  q <- function(x) {
+    x[is.na(x)] <- ""
+    need <- grepl("[\",\n]", x)
+    x[need] <- paste0("\"", gsub("\"", "\"\"", x[need]), "\"")
+    x
+  }
+  num <- matrix(formatC(as.vector(tbl), digits = 15, format = "fg"), nrow = nrow(tbl))
+  num[is.na(tbl)] <- ""
+  num <- trimws(num)
+  body <- cbind(apply(as.matrix(desc), 2, q), num)
+  hdr  <- paste(q(c(io_desc_header, colnames(tbl))), collapse = ",")
+  writeLines(c(hdr, apply(body, 1, paste, collapse = ",")), path, useBytes = TRUE)
+}
+
+# ---------------------------------------------------------------------------
+# 0.1 Read the raw I-O sheet (header row detected automatically)
+# ---------------------------------------------------------------------------
+probe      <- suppressMessages(read_excel(file_path_raw, sheet = sheet_io_raw, col_names = FALSE,
+                                          n_max = 30, .name_repair = "minimal"))
+header_row <- which(clean_txt(probe[[1]]) == "Kode I-O")[1]
+stopifnot(!is.na(header_row))
+
+io_xl <- suppressMessages(suppressWarnings(
+  read_excel(file_path_raw, sheet = sheet_io_raw, skip = header_row - 1,
+             col_names = TRUE, col_types = "text", .name_repair = "minimal")))
+
+raw_codes <- clean_txt(io_xl[[1]])
+raw_names <- clean_txt(io_xl[[2]])
+raw_cols  <- clean_txt(names(io_xl))
+
+keep_r <- grepl("^[0-9]+$", raw_codes)
+keep_c <- grepl("^[0-9]+$", raw_cols)
+
+raw_mat <- sapply(io_xl[keep_r, keep_c], to_num)
+raw_mat[is.na(raw_mat)] <- 0
+rownames(raw_mat) <- raw_codes[keep_r]
+colnames(raw_mat) <- raw_cols[keep_c]
+raw_names <- setNames(raw_names[keep_r], raw_codes[keep_r])
+
+sec_raw <- rownames(raw_mat)[rownames(raw_mat) %in% colnames(raw_mat)]           # 1..54
+fd_raw  <- colnames(raw_mat)[nchar(colnames(raw_mat)) == 3 &
+                             startsWith(colnames(raw_mat), "30") & colnames(raw_mat) != "309"]  # 301..305
+
+# Raw blocks
+Z_r    <- raw_mat[sec_raw, sec_raw]
+FD_r   <- raw_mat[sec_raw, fd_raw]
+M_r    <- raw_mat["200", sec_raw]
+M_fd_r <- raw_mat["200", fd_raw]
+TP_r    <- if ("195" %in% rownames(raw_mat)) raw_mat["195", sec_raw] else setNames(rep(0, length(sec_raw)), sec_raw)
+TP_fd_r <- if ("195" %in% rownames(raw_mat)) raw_mat["195", fd_raw]  else setNames(rep(0, length(fd_raw)), fd_raw)
+
+# Net other taxes on production: 203 - subsidies 204.
+# The sign of row 204 is detected from the raw NTB total (row 209).
+if ("204" %in% rownames(raw_mat)) {
+  va_plus  <- colSums(raw_mat[c("201", "202", "203", "204"), sec_raw])
+  va_minus <- colSums(raw_mat[c("201", "202", "203"), sec_raw]) - raw_mat["204", sec_raw]
+  sign_204 <- if (max(abs(va_plus - raw_mat["209", sec_raw])) <=
+                  max(abs(va_minus - raw_mat["209", sec_raw]))) 1 else -1
+  tax_net  <- raw_mat["203", sec_raw] + sign_204 * raw_mat["204", sec_raw]
+} else {
+  tax_net  <- raw_mat["203", sec_raw]
+}
+VA_r <- rbind("201" = raw_mat["201", sec_raw], "202" = raw_mat["202", sec_raw], "203" = tax_net)
+
+# ---------------------------------------------------------------------------
+# 0.2 Append the zero sector 55
+# ---------------------------------------------------------------------------
+sec_all <- c(sec_raw, extra_code)
+pad_vec <- function(v) setNames(c(v, 0), sec_all)
+
+Z_s <- rbind(cbind(Z_r, 0), 0)
+dimnames(Z_s) <- list(sec_all, sec_all)
+FD_s <- rbind(FD_r, 0)
+rownames(FD_s) <- sec_all
+VA_s <- cbind(VA_r, 0)
+colnames(VA_s) <- sec_all
+
+io_2020_std <- build_io_table(Z_s, FD_s, pad_vec(TP_r), TP_fd_r, pad_vec(M_r), M_fd_r, VA_s)
+
+# ---------------------------------------------------------------------------
+# 0.3 Descriptive columns (KSM) from the I-O -> PDRB concordance
+# ---------------------------------------------------------------------------
+pdrb <- read_pdrb(file_path_pdrb)
+
+# BPS 54-sector I-O -> 52 PDRB lapangan usaha (sectors 3, 4, 5 -> A.1.c)
+io_to_pdrb_raw <- c(
+  "A.1.a", "A.1.b", "A.1.c", "A.1.c", "A.1.c", "A.1.d", "A.1.e", "A.2", "A.3",
+  "B.1", "B.2", "B.3", "B.4",
+  paste0("C.", 1:16),
+  "D.1", "D.2", "E", "F", "G.1", "G.2",
+  paste0("H.", 1:6),
+  "I.1", "I.2", "J",
+  paste0("K.", 1:4),
+  "L", "M,N", "O", "P", "Q", "R,S,T,U"
+)
+stopifnot(length(io_to_pdrb_raw) == length(sec_raw))
+ksm_code <- setNames(c(io_to_pdrb_raw, extra_ksm), sec_all)
+stopifnot(all(ksm_code %in% pdrb$codes))
+
+ksm_top  <- sub("\\..*$", "", ksm_code)                 # "A.1.c" -> "A", "M,N" -> "M,N"
+ksm_name <- setNames(unname(pdrb$names[ksm_code]), sec_all)
+ksm17    <- setNames(unname(pdrb$names[ksm_top]), sec_all)
+
+sec_name_all <- setNames(c(raw_names[sec_raw], extra_name), sec_all)
+
+desc_2020 <- data.frame(
+  Kode   = rownames(io_2020_std),
+  Nama   = ifelse(rownames(io_2020_std) %in% sec_all,
+                  sec_name_all[rownames(io_2020_std)], io_row_labels[rownames(io_2020_std)]),
+  KSM_Kode = ifelse(rownames(io_2020_std) %in% sec_all, ksm_code[rownames(io_2020_std)], NA),
+  KSM_Nama = ifelse(rownames(io_2020_std) %in% sec_all, ksm_name[rownames(io_2020_std)], NA),
+  KSM_17   = ifelse(rownames(io_2020_std) %in% sec_all, ksm17[rownames(io_2020_std)], NA),
+  stringsAsFactors = FALSE
+)
+
+write_io_csv(io_2020_std, desc_2020, file_path_io)
+
+# ---------------------------------------------------------------------------
+# 0.4 Labour 2020 -> DeskripsiSektor format
+# ---------------------------------------------------------------------------
+tk_xl    <- suppressMessages(read_excel(file_path_raw, sheet = sheet_tk_raw, .name_repair = "minimal"))
+tk_codes <- clean_txt(tk_xl[[1]])
+tk_col   <- which(grepl("Tenaga Kerja", names(tk_xl), ignore.case = TRUE))[1]
+if (is.na(tk_col)) tk_col <- 3
+tk_raw   <- setNames(to_num(tk_xl[[tk_col]]), tk_codes)
+tk_raw   <- tk_raw[grepl("^[0-9]+$", names(tk_raw))]
+stopifnot(all(names(tk_raw) %in% sec_raw))
+
+tk_2020_raw <- setNames(rep(0, length(sec_all)), sec_all)
+tk_2020_raw[names(tk_raw)] <- tk_raw
+tk_2020_raw[is.na(tk_2020_raw)] <- 0
+tk_2020_int <- round_preserve(tk_2020_raw)
+
+# Short names (NamaPendek = abbreviation, NamaSingkat = short label)
+nama_pendek <- c(
+  "TP", "Hort", "Krt", "KS", "TPL", "Ptr", "JPP", "KPK", "Pkn",
+  "PMGP", "PBL", "PBjL", "PPL",
+  "IBPM", "IMM", "IPT", "ITPJ", "IKAK", "IKBR", "IKPR", "IKFO", "IKBP", "IBGL", "ILD",
+  "IBLE", "IMPk", "IAA", "IF", "IPLR",
+  "Lstr", "PGE", "PASL", "Kons", "PMSM", "PBE",
+  "AR", "AD", "AL", "ASDP", "AU", "PJPA",
+  "Akm", "PMM", "Infokom", "JPK", "ADP", "JKL", "JPKu",
+  "RE", "JP", "APPJ", "JPdk", "JKKS", "JL", "SLTJ"
+)
+nama_singkat <- c(
+  "Tanaman pangan", "Hortikultura", "Karet", "Kelapa sawit", "Perkebunan lainnya",
+  "Peternakan", "Jasa pertanian & perburuan", "Kehutanan & penebangan kayu", "Perikanan",
+  "Pertambangan migas & panas bumi", "Pertambangan batubara", "Pertambangan bijih logam",
+  "Pertambangan & penggalian lainnya",
+  "Industri batubara & kilang migas", "Industri makanan & minuman", "Industri tembakau",
+  "Industri tekstil & pakaian jadi", "Industri kulit & alas kaki", "Industri kayu, bambu & rotan",
+  "Industri kertas & percetakan", "Industri kimia & farmasi", "Industri karet & plastik",
+  "Industri barang galian non-logam", "Industri logam dasar", "Industri barang logam & elektronik",
+  "Industri mesin & perlengkapan", "Industri alat angkutan", "Industri furnitur",
+  "Industri lainnya & reparasi mesin",
+  "Ketenagalistrikan", "Pengadaan gas & produksi es", "Air, sampah & daur ulang", "Konstruksi",
+  "Perdagangan & reparasi kendaraan", "Perdagangan besar & eceran",
+  "Angkutan rel", "Angkutan darat", "Angkutan laut", "Angkutan sungai, danau & penyeberangan",
+  "Angkutan udara", "Pergudangan, penunjang angkutan & kurir",
+  "Akomodasi", "Penyediaan makan & minum", "Informasi & komunikasi",
+  "Perantara keuangan", "Asuransi & dana pensiun", "Jasa keuangan lainnya", "Jasa penunjang keuangan",
+  "Real estat", "Jasa perusahaan", "Administrasi pemerintahan & pertahanan",
+  "Jasa pendidikan", "Kesehatan & kegiatan sosial", "Jasa lainnya", "Sektor lainnya"
+)
+stopifnot(length(nama_pendek) == length(sec_all), length(nama_singkat) == length(sec_all),
+          !anyDuplicated(nama_pendek))
+
+make_deskripsi <- function(tk) {
+  data.frame(
+    KodeSektor        = as.integer(sec_all),
+    NamaSektor        = unname(sec_name_all),
+    NamaPendek        = nama_pendek,
+    NamaSingkat       = nama_singkat,
+    KSM               = unname(ksm17[sec_all]),
+    Constrained       = NA_real_,     # Not used: all sectors follow PDRB growth
+    Unconstrained     = NA_real_,
+    RateUnconstrained = NA_real_,
+    TenagaKerja       = as.numeric(tk),
+    check.names = FALSE, stringsAsFactors = FALSE
+  )
+}
+
+deskripsi_2020 <- make_deskripsi(tk_2020_int)
+write_xlsx(list(DeskripsiSektor = deskripsi_2020), file_path_desk)
+
+# ---------------------------------------------------------------------------
+# 0.5 Restructuring checks
+# ---------------------------------------------------------------------------
+cat("Header row detected in raw sheet       :", header_row, "\n")
+cat("Sectors in raw table / after sector 55 :", length(sec_raw), "/", length(sec_all), "\n")
+cat("Max |recomputed 600 - raw 600|          :",
+    format(max(abs(io_2020_std[sec_raw, "600"] - raw_mat[sec_raw, "600"])), digits = 4), "juta Rp\n")
+cat("Max |recomputed 210 - raw 210|          :",
+    format(max(abs(io_2020_std["210", sec_raw] - raw_mat["210", sec_raw])), digits = 4), "juta Rp\n")
+cat("Max |recomputed 209 - raw 209|          :",
+    format(max(abs(io_2020_std["209", sec_raw] - raw_mat["209", sec_raw])), digits = 4), "juta Rp\n")
+cat("Total TK 2020 (raw / rounded)          :", format(sum(tk_2020_raw), big.mark = ","), "/",
+    format(sum(tk_2020_int), big.mark = ","), "\n")
+cat("Written:", file_path_io, "and", file_path_desk, "\n")
+
+datatable(
+  deskripsi_2020,
+  options = list(scrollX = TRUE, scrollY = '400px', pageLength = 10, autoWidth = TRUE, dom = 'ftip'),
+  filter = 'top', rownames = FALSE, class = 'cell-border stripe hover',
+  caption = htmltools::tags$caption(
+    style = 'caption-side: top; text-align: center; color: black; font-size: 20px; font-weight: bold;',
+    'Deskripsi Sektor dan Tenaga Kerja Sumatera Selatan 2020 (Orang)')
+) |> formatRound("TenagaKerja", digits = 0)
+```
 
 ### 1 Pembacaan dan Persiapan Data
 
 Ada empat hal utama yang dilakukan pada Section 1:
 
-1.  Struktur Berkas: berkas `io_sumsel_2020.csv` merupakan ekspor apa adanya dari sheet "I-O Sumsel 2020" (pemisah koma, desimal titik). Dua baris teratas (judul tabel dan baris kosong) dilewati, sehingga baris header berisi kode kolom I-O (1–54, 180, 301–305, 309, 310, 409, 509, 600, 700).
+1.  Struktur Berkas: berkas `io_sumsel_2020.csv` adalah hasil Section 0 dalam format contoh `io` (pemisah koma, desimal titik). Baris header dideteksi otomatis dengan mencari teks "Kode I-O", sehingga berkas lama yang masih memiliki baris judul juga tetap terbaca.
 
-2.  Standardisasi Dimensi: nama baris diseragamkan menggunakan kolom "Kode I-O", sedangkan nama kolom menggunakan kode pada header. Kolom deskripsi dan kolom tanpa kode numerik (sel catatan di luar tabel) dikeluarkan dari struktur data sebelum operasi aljabar dilakukan.
+2.  Standardisasi Dimensi: nama baris diseragamkan menggunakan kolom "Kode I-O", sedangkan nama kolom menggunakan kode pada header. Lima kolom deskriptif (nama sektor dan KSM) disimpan terpisah sebagai **io_info**; kolom tanpa kode numerik dikeluarkan dari struktur data sebelum operasi aljabar dilakukan.
 
 3.  Tanda pemisah ribuan koma (,) dihilangkan dan sel kosong (NA) diubah menjadi 0 agar data yang dihasilkan berupa numerik murni.
 
-4.  Berkas PDRB: kode lapangan usaha (misal `A.1.c`, `C.2`, `M,N`) diekstraksi dari awal teks label, dan kolom tahun dideteksi otomatis. Dengan demikian skrip tetap berjalan bila data diperluas, misalnya menjadi 2014–2025.
+4.  Berkas PDRB: kode lapangan usaha (misal `A.1.c`, `C.2`, `M,N`) diekstraksi dari awal teks label, dan kolom tahun dideteksi otomatis. Baris total PDRB pada berkas disajikan dalam notasi ilmiah yang dibulatkan, sehingga total PDRB dihitung ulang dari 17 kategori lapangan usaha. Data TK 2020 dibaca dari `DeskripsiSektor_Sumsel.xlsx`.
 
-Data awal hasil bacaan di tahap ini disimpan dengan nama variabel **io_mat**, **io_data**, dan **pdrb_mat**.
+Data awal hasil bacaan di tahap ini disimpan dengan nama variabel **io_mat**, **io_data**, **io_info**, **pdrb_mat**, dan **tk_2020**.
 
-```{r}
-library(writexl)
-library(DT)
+```{r, persiapan, echo = FALSE, warning=FALSE}
+# --- Read I-O CSV (header row detected automatically) ---
+io_lines <- readLines(file_path_io, warn = FALSE, encoding = "UTF-8")
+hdr_line <- which(grepl("^\"?\\s*Kode I-O", io_lines))[1]
+stopifnot(!is.na(hdr_line))
 
-file_path_io      <- "io_sumsel_2020.csv"
-file_path_pdrb    <- "pdrb_sumsel_2014_2025.csv"
-output_excel_path <- "Sumsel_2025_IO_Projection.xlsx"
-output_csv_path   <- "Sumsel_2025_IO_Table.csv"
-
-base_year   <- "2020"
-target_year <- "2025"
-
-# --- Read I-O CSV (skip title row and blank row) ---
-io_raw <- read.csv(file_path_io, skip = 2, check.names = FALSE, stringsAsFactors = FALSE)
+io_raw <- read.csv(file_path_io, skip = hdr_line - 1, check.names = FALSE,
+                   colClasses = "character", stringsAsFactors = FALSE)
 
 # Extract and clean account codes and descriptions
-account_codes <- trimws(as.character(io_raw[[1]]))
-account_names <- trimws(as.character(io_raw[[2]]))
+account_codes <- clean_txt(io_raw[[1]])
+account_names <- clean_txt(io_raw[[2]])
+col_raw       <- clean_txt(colnames(io_raw))
 
 # Remove blank rows and keep only columns with numeric I-O codes
-valid_rows <- !is.na(account_codes) & account_codes != ""
-valid_cols <- grepl("^[0-9]+$", trimws(colnames(io_raw)))
+valid_rows <- !is.na(account_codes) & grepl("^[0-9]+$", account_codes)
+valid_cols <- grepl("^[0-9]+$", col_raw)
+desc_cols  <- which(!valid_cols)
 
 io_data <- io_raw[valid_rows, valid_cols]
+io_info <- io_raw[valid_rows, desc_cols]
+io_info[] <- lapply(io_info, clean_txt)
+colnames(io_info) <- c("Kode", "Nama", "KSM_Kode", "KSM_Nama", "KSM_17")[seq_along(desc_cols)]
+
 account_codes <- account_codes[valid_rows]
 account_names <- account_names[valid_rows]
-col_codes     <- trimws(colnames(io_data))
+col_codes     <- col_raw[valid_cols]
 
 # Convert numeric values (handling commas if present)
-io_mat <- as.matrix(io_data)
-io_mat <- apply(io_mat, 2, function(x) as.numeric(gsub(",", "", x)))
+io_mat <- sapply(io_data, to_num)
 io_mat[is.na(io_mat)] <- 0
 
-rownames(io_mat) <- account_codes
-colnames(io_mat) <- col_codes
+rownames(io_mat)  <- account_codes
+colnames(io_mat)  <- col_codes
 rownames(io_data) <- account_codes
+rownames(io_info) <- account_codes
 
 # --- Read PDRB ADHK CSV ---
-pdrb_raw <- read.csv(file_path_pdrb, check.names = FALSE, stringsAsFactors = FALSE)
+pdrb        <- read_pdrb(file_path_pdrb)
+pdrb_mat    <- pdrb$mat
+pdrb_codes  <- pdrb$codes
+pdrb_labels <- pdrb$labels
+pdrb_total  <- colSums(pdrb_mat[pdrb$top_codes, , drop = FALSE])   # Recomputed PDRB total (17 categories)
 
-# Extract PDRB codes from label prefix (e.g. "A.1.c Tanaman Perkebunan" -> "A.1.c")
-pdrb_labels <- trimws(as.character(pdrb_raw[[1]]))
-pdrb_codes  <- sub("\\.$", "", sub(" .*$", "", pdrb_labels))
-
-# Detect year columns dynamically
-year_cols <- colnames(pdrb_raw)[grepl("^[0-9]{4}$", trimws(colnames(pdrb_raw)))]
-
-pdrb_mat <- as.matrix(pdrb_raw[, year_cols])
-pdrb_mat <- apply(pdrb_mat, 2, function(x) as.numeric(gsub(",", "", x)))
-pdrb_mat[is.na(pdrb_mat)] <- 0
-
-rownames(pdrb_mat) <- pdrb_codes
-colnames(pdrb_mat) <- trimws(year_cols)
+# --- Read labour 2020 (DeskripsiSektor format) ---
+deskripsi_in <- read_excel(file_path_desk)
+tk_2020      <- setNames(as.numeric(deskripsi_in$TenagaKerja), as.character(deskripsi_in$KodeSektor))
 
 datatable(
-  io_data,
+  data.frame(io_info[, c("Nama")], io_data, check.names = FALSE) |> setNames(c("Nama Sektor", col_codes)),
   options = list(
     scrollX = TRUE,
     scrollY = '400px', # Enables horizontal scrolling for wide tables
@@ -99,13 +430,13 @@ datatable(
 
 ### 2 Standarisasi Data
 
-Tabel I-O BPS mengikuti konvensi kode baris dan kolom yang baku:
+Tabel I-O mengikuti konvensi kode baris dan kolom yang baku:
 
--   Baris 1–54 dan kolom 1–54 (Sektor): sektor produksi domestik. Kode ini muncul sekaligus pada baris dan kolom, sehingga dapat diidentifikasi sebagai irisan kode baris dan kode kolom.
+-   Baris 1–55 dan kolom 1–55 (Sektor): 54 sektor produksi domestik BPS ditambah sektor 55 (sektor lain yang tidak jelas batasannya, bernilai nol). Kode ini muncul sekaligus pada baris dan kolom, sehingga dapat diidentifikasi sebagai irisan kode baris dan kode kolom.
 
--   Baris 190, 200 (Input Antara): total input antara domestik dan input antara impor.
+-   Baris 190, 195, 200 (Input Antara dan Pajak atas Produk): total input antara domestik, pajak dikurang subsidi atas produk, dan input antara impor.
 
--   Baris 201–204 (Nilai Tambah Bruto): 201 kompensasi tenaga kerja, 202 surplus usaha bruto (termasuk pendapatan campuran), 203 pajak lainnya atas produksi, 204 subsidi lainnya atas produksi. Baris 209 adalah total NTB dan 210 total input.
+-   Baris 201–203 (Nilai Tambah Bruto): 201 kompensasi tenaga kerja, 202 surplus usaha bruto (termasuk pendapatan campuran), 203 pajak dikurang subsidi lainnya atas produksi. Baris 209 adalah total NTB (total input primer) dan 210 total input.
 
 -   Kolom 180, 301–305, 309, 600 (Permintaan): 180 total permintaan antara; 301 konsumsi rumah tangga (termasuk LNPRT), 302 konsumsi pemerintah, 303 PMTB, 304 perubahan inventori, 305 ekspor; 309 total permintaan akhir; 600 total output.
 
@@ -113,42 +444,33 @@ Kolom 304 (perubahan inventori) adalah satu-satunya kolom yang memuat nilai nega
 
 Pencocokan awalan kode (`startsWith`) digunakan agar skrip tetap konsisten bila struktur kolom permintaan akhir berbeda pada rilis tabel yang lain. Syarat panjang kode tiga digit (`nchar == 3`) ditambahkan agar kode sektor seperti 20 dan 30 tidak ikut terpilih sebagai akun NTB atau permintaan akhir.
 
-**Konkordansi Sektor:** PDRB menyajikan 52 lapangan usaha, sedangkan Tabel I-O memuat 54 sektor. Selisih dua sektor berasal dari rincian subsektor perkebunan: sektor I-O 3 (Karet), 4 (Kelapa Sawit), dan 5 (Tanaman Perkebunan Lainnya) seluruhnya dipetakan ke `A.1.c Tanaman Perkebunan`, sehingga ketiganya menggunakan indeks pertumbuhan yang sama. Sebanyak 51 sektor lainnya berpasangan satu-satu.
+**Konkordansi Sektor:** konkordansi I-O → PDRB dibaca langsung dari kolom `Kode sektor KSM` pada berkas I-O. PDRB menyajikan 52 lapangan usaha, sedangkan Tabel I-O memuat 54 sektor (+ sektor 55). Sektor I-O 3 (Karet), 4 (Kelapa Sawit), dan 5 (Tanaman Perkebunan Lainnya) seluruhnya dipetakan ke `A.1.c Tanaman Perkebunan`, sehingga ketiganya menggunakan indeks pertumbuhan yang sama. Sebanyak 51 sektor lainnya berpasangan satu-satu. Sektor 55 diberi kode `R,S,T,U` mengikuti format contoh, tetapi karena output 2020-nya nol sektor ini tetap bernilai nol.
 
-```{r}
+```{r, standarisasi, echo = FALSE, warning=FALSE}
 # Dynamic Account Identification by Code Pattern ---
-sec_codes    <- account_codes[account_codes %in% col_codes]                       # 1..54
+sec_codes    <- account_codes[account_codes %in% col_codes]                       # 1..55
 fd_codes     <- col_codes[nchar(col_codes) == 3 & startsWith(col_codes, "30") & col_codes != "309"]  # 301..305
 inv_code     <- "304"                                                            # Change in inventories (contains negatives)
 fd_ras_codes <- setdiff(fd_codes, inv_code)                                      # FD columns entering RAS
 out_code     <- "600"
 imp_code     <- "200"
-va_codes     <- account_codes[nchar(account_codes) == 3 & startsWith(account_codes, "20") & !account_codes %in% c("200", "209")]  # 201..204
+tp_code      <- "195"                                                            # Taxes less subsidies on products
+va_codes     <- account_codes[nchar(account_codes) == 3 & startsWith(account_codes, "20") & !account_codes %in% c("200", "209")]  # 201..203
 
 sec_names <- account_names[match(sec_codes, account_codes)]
 
-# --- Sector Concordance: I-O (54) -> PDRB (52) ---
-io_to_pdrb <- c(
-  "A.1.a", "A.1.b", "A.1.c", "A.1.c", "A.1.c", "A.1.d", "A.1.e", "A.2", "A.3",
-  "B.1", "B.2", "B.3", "B.4",
-  paste0("C.", 1:16),
-  "D.1", "D.2", "E", "F", "G.1", "G.2",
-  paste0("H.", 1:6),
-  "I.1", "I.2", "J",
-  paste0("K.", 1:4),
-  "L", "M,N", "O", "P", "Q", "R,S,T,U"
-)
+# --- Sector Concordance: I-O -> PDRB (read from the 'Kode sektor KSM' column) ---
+io_to_pdrb <- setNames(io_info[sec_codes, "KSM_Kode"], sec_codes)
 
-stopifnot(length(io_to_pdrb) == length(sec_codes))
 stopifnot(all(io_to_pdrb %in% rownames(pdrb_mat)))
 stopifnot(all(c(base_year, target_year) %in% colnames(pdrb_mat)))
-names(io_to_pdrb) <- sec_codes
 
 concordance <- data.frame(
-  Kode_IO   = sec_codes,
-  Sektor_IO = sec_names,
-  Kode_PDRB = io_to_pdrb,
+  Kode_IO    = sec_codes,
+  Sektor_IO  = sec_names,
+  Kode_PDRB  = io_to_pdrb,
   Label_PDRB = pdrb_labels[match(io_to_pdrb, pdrb_codes)],
+  KSM_17     = io_info[sec_codes, "KSM_17"],
   check.names = FALSE
 )
 
@@ -160,29 +482,33 @@ Seluruh blok tabel dasar 2020 diekstraksi dari **io_mat**:
 
 -   Matriks Transaksi Antara Domestik ($Z_0$): transaksi barang dan jasa domestik sektor $i$ yang digunakan sebagai input antara oleh sektor $j$.
 
--   Vektor Output ($X_0$), Input Antara Impor ($M_0$), Nilai Tambah Bruto ($VA_0$, penjumlahan baris 201–204), serta Permintaan Akhir domestik ($F_0$).
+-   Vektor Output ($X_0$), Pajak Dikurang Subsidi atas Produk ($T_0$, baris 195), Input Antara Impor ($M_0$), Nilai Tambah Bruto ($VA_0$, penjumlahan baris 201–203), serta Permintaan Akhir domestik ($F_0$).
 
--   Verifikasi Keseimbangan Tahun Dasar: pada setiap sektor harus berlaku $$X_j = \sum_i z_{ij} + M_j + VA_j \quad \text{(sisi input)}, \qquad X_i = \sum_j z_{ij} + \sum_k f_{ik} \quad \text{(sisi output)}$$
+-   Verifikasi Keseimbangan Tahun Dasar: pada setiap sektor harus berlaku $$X_j = \sum_i z_{ij} + T_j + M_j + VA_j \quad \text{(sisi input)}, \qquad X_i = \sum_j z_{ij} + \sum_k f_{ik} \quad \text{(sisi output)}$$
 
 Matriks Koefisien Teknis tahun dasar menjadi titik awal (*prior*) algoritma RAS: $$A_0 = Z_0 \hat{X}_0^{-1}, \quad \text{dengan } a_{ij} = \frac{z_{ij}}{X_j}$$
 
-Selain itu dihitung rasio input primer per sektor, yaitu rasio NTB $\rho_j = VA_j / X_j$ dan rasio impor antara $\mu_j = M_j / X_j$. Sektor dengan output nol (Pertambangan Bijih Logam) diberi koefisien nol untuk menghindari pembagian dengan nol.
+Selain itu dihitung rasio input primer per sektor, yaitu rasio NTB $\rho_j = VA_j / X_j$, rasio impor antara $\mu_j = M_j / X_j$, dan rasio pajak atas produk $\tau_j = T_j / X_j$. Sektor dengan output nol (Pertambangan Bijih Logam dan sektor 55) diberi koefisien nol untuk menghindari pembagian dengan nol.
 
-```{r}
+```{r, ekstraksi, echo = FALSE, warning=FALSE}
+zero_sec <- function(codes) setNames(rep(0, length(codes)), codes)
+
 # Extract 2020 Blocks
 Z_0       <- io_mat[sec_codes, sec_codes]                  # Domestic intermediate transactions
 X_0       <- io_mat[sec_codes, out_code]                   # Total output
 M_0       <- io_mat[imp_code, sec_codes]                   # Imported intermediate inputs
+TP_0      <- if (tp_code %in% account_codes) io_mat[tp_code, sec_codes] else zero_sec(sec_codes)
 VA_comp_0 <- io_mat[va_codes, sec_codes, drop = FALSE]     # Value added components
 VA_0      <- colSums(VA_comp_0)                            # Gross value added (NTB)
 FD_0      <- io_mat[sec_codes, fd_codes]                   # Domestic final demand
 M_FD_0    <- io_mat[imp_code, fd_codes]                    # Imports for final demand
+TP_FD_0   <- if (tp_code %in% account_codes) io_mat[tp_code, fd_codes] else zero_sec(fd_codes)
 
 # Base-year balance check
-Total_Input_0  <- colSums(Z_0) + M_0 + VA_0
+Total_Input_0  <- colSums(Z_0) + TP_0 + M_0 + VA_0
 Total_Output_0 <- rowSums(Z_0) + rowSums(FD_0)
-cat("2020 max |Total Input - X| :", max(abs(Total_Input_0 - X_0)), "\n")
-cat("2020 max |Total Output - X|:", max(abs(Total_Output_0 - X_0)), "\n")
+cat("2020 max |Total Input - X| :", format(max(abs(Total_Input_0 - X_0)), digits = 4), "\n")
+cat("2020 max |Total Output - X|:", format(max(abs(Total_Output_0 - X_0)), digits = 4), "\n")
 
 # Technical coefficients: A_0 = Z_0 * diag(1/X_0)
 inv_X_0 <- ifelse(X_0 > 0, 1 / X_0, 0)
@@ -193,21 +519,24 @@ colnames(A_0) <- sec_codes
 # Primary input ratios
 va_ratio_0  <- VA_0 * inv_X_0     # rho_j = VA_j / X_j
 imp_ratio_0 <- M_0 * inv_X_0      # mu_j  = M_j / X_j
+tp_ratio_0  <- TP_0 * inv_X_0     # tau_j = T_j / X_j
 ```
 
 ### 4 Target Marjin 2025 dari PDRB ADHK
 
 Indeks pertumbuhan riil setiap sektor dihitung dari PDRB ADHK: $$g_j = \frac{PDRB_{j,2025}}{PDRB_{j,2020}}$$
 
+Seluruh sektor menggunakan indeks pertumbuhan PDRB-nya masing-masing (tidak ada pembagian sektor *constrained* / *unconstrained*). Pengecualian hanya untuk sektor dengan output 2020 nol (Pertambangan Bijih Logam dan sektor 55), yang diberi indeks 1 sehingga tetap bernilai nol.
+
 Karena tahun target 2025 tersedia langsung pada data PDRB, rasio output terhadap NTB tidak perlu diestimasi dari tren historis. Rasio tahun dasar dipertahankan (asumsi teknologi input primer tetap), sehingga marjin 2025 diturunkan sebagai berikut:
 
--   Nilai Tambah: $VA_{j,2025} = g_j \, VA_{j,2020}$. Komponen NTB (201–204) bergerak proporsional mengikuti pangsa 2020.
+-   Nilai Tambah: $VA_{j,2025} = g_j \, VA_{j,2020}$. Komponen NTB (201–203) bergerak proporsional mengikuti pangsa 2020.
 
 -   Output: $X_{j,2025} = VA_{j,2025} / \rho_j$.
 
--   Impor Antara: $M_{j,2025} = \mu_j \, X_{j,2025}$.
+-   Impor Antara dan Pajak atas Produk: $M_{j,2025} = \mu_j \, X_{j,2025}$, $T_{j,2025} = \tau_j \, X_{j,2025}$.
 
--   Target Kolom Input Antara Domestik: $v_j = X_{j,2025} - VA_{j,2025} - M_{j,2025}$.
+-   Target Kolom Input Antara Domestik: $v_j = X_{j,2025} - VA_{j,2025} - M_{j,2025} - T_{j,2025}$.
 
 -   Target Baris: $u_i = X_{i,2025} - INV_{i,2025}$, dengan perubahan inventori $INV_{i,2025} = g_i \, INV_{i,2020}$ (eksogen).
 
@@ -217,11 +546,11 @@ Permintaan akhir ikut diseimbangkan di dalam RAS, bukan ditetapkan sebagai resid
 
 Laju pertumbuhan tahunan rata-rata (CAGR) $\left(g_j^{1/(2025-2020)} - 1\right)$ juga dihitung sebagai informasi pendukung.
 
-```{r}
-# Sectoral real growth index from PDRB ADHK
+```{r, target, echo = FALSE, warning=FALSE}
+# Sectoral real growth index from PDRB ADHK (all sectors follow their own PDRB growth)
 g_pdrb <- pdrb_mat[, target_year] / pdrb_mat[, base_year]
 g_sec  <- g_pdrb[io_to_pdrb]
-g_sec[!is.finite(g_sec)] <- 1          # Zero-output sectors (e.g. B.3) keep index 1
+g_sec[!is.finite(g_sec) | X_0 <= 0] <- 1   # Zero-output sectors (B.3, sector 55) keep index 1
 names(g_sec) <- sec_codes
 
 n_year   <- as.numeric(target_year) - as.numeric(base_year)
@@ -231,6 +560,7 @@ cagr_sec <- g_sec^(1 / n_year) - 1
 VA_1      <- VA_0 * g_sec
 X_1       <- ifelse(va_ratio_0 > 0, VA_1 / va_ratio_0, X_0 * g_sec)
 M_1       <- imp_ratio_0 * X_1
+TP_1      <- tp_ratio_0 * X_1
 VA_comp_1 <- VA_comp_0 %*% diag(g_sec)
 rownames(VA_comp_1) <- va_codes
 colnames(VA_comp_1) <- sec_codes
@@ -240,7 +570,7 @@ INV_1 <- FD_0[, inv_code] * g_sec
 
 # RAS targets
 row_target   <- X_1 - INV_1                               # u: Z row + FD (non-inventory)
-col_target_Z <- X_1 - VA_1 - M_1                          # v: domestic intermediate inputs
+col_target_Z <- X_1 - VA_1 - M_1 - TP_1                   # v: domestic intermediate inputs
 
 FD_prior      <- diag(g_sec) %*% FD_0[, fd_ras_codes]     # FD rows scaled by sector growth
 rownames(FD_prior) <- sec_codes
@@ -249,18 +579,19 @@ colnames(FD_prior) <- fd_ras_codes
 lambda_fd     <- (sum(row_target) - sum(col_target_Z)) / sum(FD_prior)
 col_target_FD <- colSums(FD_prior) * lambda_fd            # f: FD column totals
 
-# Imports for final demand follow FD column growth
+# Imports and product taxes for final demand follow FD column growth
 fd_growth <- c(
   ifelse(colSums(FD_0[, fd_ras_codes]) > 0, col_target_FD / colSums(FD_0[, fd_ras_codes]), 1),
   setNames(ifelse(sum(FD_0[, inv_code]) != 0, sum(INV_1) / sum(FD_0[, inv_code]), 1), inv_code)
 )
-M_FD_1 <- M_FD_0 * fd_growth[fd_codes]
+M_FD_1  <- M_FD_0  * fd_growth[fd_codes]
+TP_FD_1 <- TP_FD_0 * fd_growth[fd_codes]
 
 # Feasibility checks
 stopifnot(all(row_target >= 0), all(col_target_Z >= 0), all(col_target_FD >= 0))
 cat("FD closure scalar (lambda):", round(lambda_fd, 6), "\n")
 cat("Aggregate NTB growth (I-O weights):", round(sum(VA_1) / sum(VA_0), 6), "\n")
-cat("Aggregate PDRB growth (ADHK)      :", round(pdrb_mat["Produk", target_year] / pdrb_mat["Produk", base_year], 6), "\n")
+cat("Aggregate PDRB growth (ADHK)      :", round(pdrb_total[target_year] / pdrb_total[base_year], 6), "\n")
 ```
 
 ### 5 Algoritma RAS
@@ -275,9 +606,9 @@ Metode RAS (Stone, 1961; Bacharach, 1970; Miller & Blair, 2009, Bab 7) mencari m
 
 -   Kriteria Konvergensi: iterasi dihentikan bila $$\max\left( \left|T\mathbf{1} - u\right|, \; \left|\mathbf{1}^\top T - [v, f]\right| \right) < \varepsilon$$
 
-Hasil akhir setara dengan $Z_{2025} = \hat{R} \, A_0 \hat{X}_{2025} \, \hat{S}$, sehingga koefisien teknis 2025 adalah $A_{2025} = \hat{R} A_0 \hat{S}_Z$. Efek substitusi ditangkap oleh $\hat{R}$ (baris), sedangkan efek fabrikasi ditangkap oleh $\hat{S}$ (kolom). Baris atau kolom dengan jumlah nol (sektor Bijih Logam) diberi faktor 1 sehingga tetap bernilai nol.
+Hasil akhir setara dengan $Z_{2025} = \hat{R} \, A_0 \hat{X}_{2025} \, \hat{S}$, sehingga koefisien teknis 2025 adalah $A_{2025} = \hat{R} A_0 \hat{S}_Z$. Efek substitusi ditangkap oleh $\hat{R}$ (baris), sedangkan efek fabrikasi ditangkap oleh $\hat{S}$ (kolom). Baris atau kolom dengan jumlah nol (sektor Bijih Logam dan sektor 55) diberi faktor 1 sehingga tetap bernilai nol.
 
-```{r}
+```{r, ras, echo = FALSE, warning=FALSE}
 # --- Build Prior Matrix ---
 T_prior <- cbind(A_0 %*% diag(X_1), FD_prior)
 rownames(T_prior) <- sec_codes
@@ -330,92 +661,72 @@ FD_1 <- FD_1[, fd_codes]
 
 -   Matriks Transaksi Antara ($Z_{2025}$) dan Permintaan Akhir ($F_{2025}$): diperoleh langsung dari hasil RAS, ditambah kolom perubahan inventori eksogen.
 
--   Blok Input Primer: input antara impor $M_{2025}$ dan komponen NTB 201–204 dari Section 4.
+-   Blok Input Primer: pajak atas produk $T_{2025}$, input antara impor $M_{2025}$, dan komponen NTB 201–203 dari Section 4.
 
--   Verifikasi Keseimbangan Akuntansi (Row-Column Balancing): memastikan bahwa pada setiap sektor berlaku $$\text{Total Input}_j = \sum_i z_{ij} + M_j + VA_j \; = \; \sum_j z_{ij} + \sum_k f_{ik} = \text{Total Output}_j$$
+-   Verifikasi Keseimbangan Akuntansi (Row-Column Balancing): memastikan bahwa pada setiap sektor berlaku $$\text{Total Input}_j = \sum_i z_{ij} + T_j + M_j + VA_j \; = \; \sum_j z_{ij} + \sum_k f_{ik} = \text{Total Output}_j$$
 
 -   Matriks Koefisien Teknis $A_{2025} = Z_{2025}\hat{X}_{2025}^{-1}$ dan Pengganda Leontief $L_{2025} = (I - A_{2025})^{-1}$.
 
-Susunan tabel dipertahankan sama dengan tabel asli BPS: 54 sektor, kolom 1–54, 180, 301–305, 309, 310, 409, 509, 600, 700 serta baris 1–54, 190, 200, 201–204, 209, 210. Kolom 310 adalah total permintaan, 409 total impor (hanya terisi pada baris 200), 509 margin (nol pada tabel transaksi domestik atas dasar harga produsen), dan 700 total penyediaan.
+Susunan tabel 2025 dibuat dengan fungsi yang sama dengan tabel 2020 pada Section 0, sehingga identik dengan format contoh `io`: 55 sektor; kolom 1–55, 180, 301–305, 309, 310, 409, 509, 600, 700; serta baris 1–55, 190, 195, 200, 201–203, 209, 210. Kolom 310 adalah total permintaan, 409 total impor dan 509 margin (nol pada tabel transaksi domestik atas dasar harga produsen), dan 700 total penyediaan. Sel yang kosong pada format contoh juga dibiarkan kosong.
 
-```{r}
-# --- Build Full I-O Table 2025 ---
-  Total_Interm_Demand <- rowSums(Z_1)                         # 180
-  Total_Final_Demand  <- rowSums(FD_1)                        # 309
-  Total_Gross_Output  <- Total_Interm_Demand + Total_Final_Demand   # 600
-  Total_Gross_Input   <- colSums(Z_1) + M_1 + colSums(VA_comp_1)    # 210
+```{r, verif, echo = FALSE, warning=FALSE}
+# --- Build Full I-O Table 2025 (io template layout) ---
+io_table <- build_io_table(Z_1, FD_1, TP_1, TP_FD_1, M_1, M_FD_1, VA_comp_1)
 
-  Total_Demand        <- Total_Interm_Demand + Total_Final_Demand   # 310
-  Total_Imports       <- sum(M_1) + sum(M_FD_1)                     # 409 (row 200 only)
+Total_Gross_Output <- io_table[sec_codes, "600"]
+Total_Gross_Input  <- io_table["210", sec_codes]
 
-  # Keep the full BPS column set: 1..54, 180, 301..305, 309, 310, 409, 509, 600, 700
-  top_block <- cbind(Z_1, "180" = Total_Interm_Demand, FD_1,
-                     "309" = Total_Final_Demand, "310" = Total_Demand,
-                     "409" = 0, "509" = 0,
-                     "600" = Total_Gross_Output, "700" = Total_Gross_Output)
+# Descriptive columns (same as the 2020 file)
+io_desc_df <- io_info[rownames(io_table), c("Kode", "Nama", "KSM_Kode", "KSM_Nama", "KSM_17")]
+io_desc_df$Kode <- rownames(io_table)
+io_desc    <- io_desc_df$Nama
 
-  # Intermediate input totals and imports (with FD columns)
-  row_190 <- c(colSums(Z_1), sum(Z_1), colSums(FD_1), sum(FD_1), sum(Total_Demand),
-               0, 0, sum(Total_Gross_Output), sum(Total_Gross_Output))
-  row_200 <- c(M_1, sum(M_1), M_FD_1, sum(M_FD_1), Total_Imports,
-               Total_Imports, 0, 0, Total_Imports)
+# --- Balance Verification ---
+balance_check <- data.frame(
+  Kode         = sec_codes,
+  Sektor       = sec_names,
+  Total_Input  = Total_Gross_Input,
+  Total_Output = Total_Gross_Output,
+  Selisih      = Total_Gross_Input - Total_Gross_Output,
+  check.names  = FALSE
+)
+max_imbalance <- max(abs(balance_check$Selisih))
+cat("2025 max |Total Input - Total Output|:", format(max_imbalance, scientific = TRUE), "\n")
+stopifnot(max_imbalance < 1e-3)
 
-  # Value added rows (FD columns set to 0, as in BPS layout)
-  n_fd_extra <- ncol(FD_1) + 6
-  va_rows <- cbind(VA_comp_1, rowSums(VA_comp_1), matrix(0, nrow = nrow(VA_comp_1), ncol = n_fd_extra))
-  row_209 <- c(colSums(VA_comp_1), sum(VA_comp_1), rep(0, n_fd_extra))
-  row_210 <- c(Total_Gross_Input, sum(Total_Gross_Input), rep(NA, n_fd_extra))
+# --- Technical Coefficients and Leontief Inverse 2020 & 2025 ---
+inv_X_1 <- ifelse(Total_Gross_Output > 0, 1 / Total_Gross_Output, 0)
+A_1 <- Z_1 %*% diag(inv_X_1)
+rownames(A_1) <- sec_codes
+colnames(A_1) <- sec_codes
 
-  bottom_block <- rbind("190" = row_190, "200" = row_200, va_rows, "209" = row_209, "210" = row_210)
-  rownames(bottom_block) <- c("190", "200", va_codes, "209", "210")
-  colnames(bottom_block) <- colnames(top_block)
+I_mat <- diag(nrow(A_1))
+L_1   <- solve(I_mat - A_1)
+L_0   <- solve(I_mat - A_0)
+dimnames(L_1) <- dimnames(L_0) <- list(sec_codes, sec_codes)
 
-  io_table <- rbind(top_block, bottom_block)
+# --- Margin Summary per Sector ---
+margins_check <- data.frame(
+  Kode           = sec_codes,
+  Sektor         = sec_names,
+  Kode_PDRB      = io_to_pdrb,
+  Growth_Index   = round(g_sec, 6),
+  CAGR           = round(cagr_sec, 6),
+  X_2020         = X_0,
+  X_2025         = Total_Gross_Output,
+  VA_2020        = VA_0,
+  VA_2025        = VA_1,
+  Row_Target     = u_target,
+  Row_Achieved   = rowSums(T_ras),
+  Col_Target_Z   = col_target_Z,
+  Col_Achieved_Z = colSums(Z_1),
+  check.names    = FALSE
+)
 
-  # Row descriptions from the base table
-  io_desc <- account_names[match(rownames(io_table), account_codes)]
-
-  # --- Balance Verification ---
-  balance_check <- data.frame(
-    Kode         = sec_codes,
-    Sektor       = sec_names,
-    Total_Input  = Total_Gross_Input,
-    Total_Output = Total_Gross_Output,
-    Selisih      = Total_Gross_Input - Total_Gross_Output,
-    check.names  = FALSE
-  )
-  max_imbalance <- max(abs(balance_check$Selisih))
-  cat("2025 max |Total Input - Total Output|:", format(max_imbalance, scientific = TRUE), "\n")
-  stopifnot(max_imbalance < 1e-3)
-
-  # --- Technical Coefficients and Leontief Inverse 2025 ---
-  inv_X_1 <- ifelse(Total_Gross_Output > 0, 1 / Total_Gross_Output, 0)
-  A_1 <- Z_1 %*% diag(inv_X_1)
-  rownames(A_1) <- sec_codes
-  colnames(A_1) <- sec_codes
-
-  I_mat <- diag(nrow(A_1))
-  L_1   <- solve(I_mat - A_1)
-  rownames(L_1) <- sec_codes
-  colnames(L_1) <- sec_codes
-
-  # --- Margin Summary per Sector ---
-  margins_check <- data.frame(
-    Kode           = sec_codes,
-    Sektor         = sec_names,
-    Kode_PDRB      = io_to_pdrb,
-    Growth_Index   = round(g_sec, 6),
-    CAGR           = round(cagr_sec, 6),
-    X_2020         = X_0,
-    X_2025         = Total_Gross_Output,
-    VA_2020        = VA_0,
-    VA_2025        = VA_1,
-    Row_Target     = u_target,
-    Row_Achieved   = rowSums(T_ras),
-    Col_Target_Z   = col_target_Z,
-    Col_Achieved_Z = colSums(Z_1),
-    check.names    = FALSE
-  )
+cat("Total output 2020 -> 2025:", format(round(sum(X_0) / 1e6, 2), nsmall = 2), "->",
+    format(round(sum(Total_Gross_Output) / 1e6, 2), nsmall = 2), "triliun Rp\n")
+cat("Total NTB    2020 -> 2025:", format(round(sum(VA_0) / 1e6, 2), nsmall = 2), "->",
+    format(round(sum(VA_1) / 1e6, 2), nsmall = 2), "triliun Rp\n")
 
 datatable(
   data.frame(Deskripsi = io_desc, round(io_table, 2), check.names = FALSE),
@@ -435,29 +746,854 @@ datatable(
 )
 ```
 
-### 7 Export to Excel and CSV
+### 7 Proyeksi Tenaga Kerja Sektoral 2025
 
-```{r}
+Proyeksi TK 2025 menggunakan pendekatan pengganda tenaga kerja (*employment multiplier*) I-O dengan asumsi produktivitas tenaga kerja per sektor tetap pada tingkat 2020:
+
+-   Koefisien Tenaga Kerja Langsung (pengganda langsung) 2020, dalam orang per Rp 1 miliar output: $$e_j = \frac{TK_{j,2020}}{X_{j,2020}}$$
+
+-   Proyeksi TK 2025: koefisien 2020 diterapkan pada output sektoral 2025 hasil proyeksi I-O: $$TK_{j,2025} = e_j \, X_{j,2025}$$
+
+-   Konsistensi dengan Model Leontief: karena $X_{2025} = L_{2025} f_{2025}$, proyeksi di atas identik dengan $$TK_{2025} = \hat{e} \, L_{2025} \, f_{2025}$$ yaitu TK yang dibutuhkan untuk memenuhi seluruh permintaan akhir 2025 secara langsung maupun tidak langsung. Kesamaan ini diverifikasi di dalam skrip.
+
+-   Pengganda Tenaga Kerja (Miller & Blair, 2009, Bab 6): $m_j = \sum_i e_i L_{ij}$, yaitu jumlah TK di seluruh perekonomian yang dibutuhkan per Rp 1 miliar tambahan permintaan akhir sektor $j$. Rasio Tipe I adalah $m_j / e_j$. Keduanya dihitung untuk struktur 2020 ($L_{2020}$) dan 2025 ($L_{2025}$), dengan koefisien TK $e$ tetap.
+
+**Catatan:** pengganda $m_j$ tidak dikalikan dengan output total sektor $j$, karena output $X_j$ sudah memuat efek tidak langsung dari sektor lain. Perkalian $m_j X_j$ akan menghitung TK yang sama lebih dari satu kali (*double counting*).
+
+Indikator pendukung: output dan NTB per pekerja (juta Rp per orang) untuk 2020 dan 2025, serta ringkasan TK menurut 17 kategori lapangan usaha (KSM 17 sektor). Hasil TK 2025 juga disimpan dalam format `DeskripsiSektor` (dibulatkan ke orang utuh dengan metode sisa terbesar).
+
+```{r, tenagakerja, echo = FALSE, warning=FALSE}
+# --- Labour 2020 aligned with I-O sectors ---
+tk_0 <- tk_2020[sec_codes]
+tk_0[is.na(tk_0)] <- 0
+names(tk_0) <- sec_codes
+
+X0_bn <- X_0 / 1000                      # Rp miliar
+X1_bn <- Total_Gross_Output / 1000       # Rp miliar
+
+# Direct labour coefficient (workers per Rp 1 miliar output)
+e_0 <- ifelse(X0_bn > 0, tk_0 / X0_bn, 0)
+if (any(tk_0 > 0 & X_0 <= 0)) warning("Sectors with labour but zero output: ", paste(sec_codes[tk_0 > 0 & X_0 <= 0], collapse = ", "))
+
+# --- TK 2025 projection ---
+tk_1 <- e_0 * X1_bn
+
+# Consistency with the Leontief model: e_hat * L_2025 * f_2025
+f_1        <- rowSums(FD_1)
+tk_1_leon  <- e_0 * as.vector(L_1 %*% f_1) / 1000
+cat("Max |e*X_2025 - e_hat*L_2025*f_2025| :", format(max(abs(tk_1 - tk_1_leon)), digits = 4), "orang\n")
+stopifnot(max(abs(tk_1 - tk_1_leon)) < 1)
+
+# --- Employment multipliers (workers per Rp 1 miliar final demand) ---
+m_0 <- colSums(e_0 * L_0)
+m_1 <- colSums(e_0 * L_1)
+typeI_0 <- ifelse(e_0 > 0, m_0 / e_0, NA)
+typeI_1 <- ifelse(e_0 > 0, m_1 / e_0, NA)
+
+# --- Productivity indicators (juta Rp per worker) ---
+VA_1_sec <- colSums(VA_comp_1)
+xpw_0  <- ifelse(tk_0 > 0, X_0 / tk_0, NA)
+xpw_1  <- ifelse(tk_1 > 0, Total_Gross_Output / tk_1, NA)
+vapw_0 <- ifelse(tk_0 > 0, VA_0 / tk_0, NA)
+vapw_1 <- ifelse(tk_1 > 0, VA_1_sec / tk_1, NA)
+
+tk_1_int <- round_preserve(tk_1)
+
+labour_analysis <- data.frame(
+  Kode               = sec_codes,
+  Sektor             = sec_names,
+  KSM_17             = io_info[sec_codes, "KSM_17"],
+  Kode_PDRB          = io_to_pdrb,
+  Growth_Index       = round(g_sec, 6),
+  X_2020             = X_0,
+  X_2025             = Total_Gross_Output,
+  TK_2020            = tk_0,
+  Koef_TK            = e_0,               # orang per Rp 1 miliar output
+  TK_2025            = tk_1,
+  TK_2025_Bulat      = tk_1_int,
+  Tambahan_TK        = tk_1 - tk_0,
+  Pertumbuhan_TK_Pct = ifelse(tk_0 > 0, 100 * (tk_1 / tk_0 - 1), NA),
+  Pengganda_TK_2020  = m_0,
+  Pengganda_TK_2025  = m_1,
+  TipeI_2020         = typeI_0,
+  TipeI_2025         = typeI_1,
+  Output_per_TK_2020 = xpw_0,
+  Output_per_TK_2025 = xpw_1,
+  NTB_per_TK_2020    = vapw_0,
+  NTB_per_TK_2025    = vapw_1,
+  check.names        = FALSE
+)
+
+# --- Summary by 17 KSM categories (order of first appearance) ---
+ksm_lvl <- unique(labour_analysis$KSM_17)
+labour_by_ksm <- do.call(rbind, lapply(ksm_lvl, function(k) {
+  s <- labour_analysis$KSM_17 == k
+  data.frame(KSM_17 = k,
+             TK_2020 = sum(labour_analysis$TK_2020[s]),
+             TK_2025 = sum(labour_analysis$TK_2025[s]),
+             X_2020  = sum(labour_analysis$X_2020[s]),
+             X_2025  = sum(labour_analysis$X_2025[s]),
+             check.names = FALSE)
+}))
+labour_by_ksm$Tambahan_TK        <- labour_by_ksm$TK_2025 - labour_by_ksm$TK_2020
+labour_by_ksm$Pertumbuhan_TK_Pct <- ifelse(labour_by_ksm$TK_2020 > 0,
+                                           100 * (labour_by_ksm$TK_2025 / labour_by_ksm$TK_2020 - 1), NA)
+labour_by_ksm$Pangsa_TK_2025_Pct <- 100 * labour_by_ksm$TK_2025 / sum(labour_by_ksm$TK_2025)
+labour_by_ksm <- rbind(labour_by_ksm, data.frame(
+  KSM_17 = "Total", TK_2020 = sum(tk_0), TK_2025 = sum(tk_1), X_2020 = sum(X_0),
+  X_2025 = sum(Total_Gross_Output), Tambahan_TK = sum(tk_1) - sum(tk_0),
+  Pertumbuhan_TK_Pct = 100 * (sum(tk_1) / sum(tk_0) - 1), Pangsa_TK_2025_Pct = 100))
+
+# --- TK 2025 in DeskripsiSektor format ---
+deskripsi_2025 <- make_deskripsi(tk_1_int[as.character(sec_all)])
+
+cat("Total TK 2020:", format(round(sum(tk_0)), big.mark = ","), "orang\n")
+cat("Total TK 2025:", format(round(sum(tk_1)), big.mark = ","), "orang (",
+    sprintf("%+.2f%%", 100 * (sum(tk_1) / sum(tk_0) - 1)), ")\n")
+
+datatable(
+  labour_by_ksm,
+  options = list(scrollX = TRUE, pageLength = 20, autoWidth = TRUE, dom = 't'),
+  rownames = FALSE, class = 'cell-border stripe hover',
+  caption = htmltools::tags$caption(
+    style = 'caption-side: top; text-align: center; color: black; font-size: 20px; font-weight: bold;',
+    'Tenaga Kerja Sumatera Selatan 2020 dan Proyeksi 2025 menurut 17 Kategori (Orang; Output Juta Rupiah)')
+) |>
+  formatRound(c("TK_2020", "TK_2025", "Tambahan_TK", "X_2020", "X_2025"), digits = 0) |>
+  formatRound(c("Pertumbuhan_TK_Pct", "Pangsa_TK_2025_Pct"), digits = 2)
+
+datatable(
+  labour_analysis[, c("Kode", "Sektor", "Growth_Index", "TK_2020", "Koef_TK", "TK_2025",
+                      "Pertumbuhan_TK_Pct", "Pengganda_TK_2025", "TipeI_2025")],
+  options = list(scrollX = TRUE, scrollY = '400px', pageLength = 10, autoWidth = TRUE, dom = 'ftip'),
+  filter = 'top', rownames = FALSE, class = 'cell-border stripe hover',
+  caption = htmltools::tags$caption(
+    style = 'caption-side: top; text-align: center; color: black; font-size: 20px; font-weight: bold;',
+    'Proyeksi Tenaga Kerja Sektoral Sumatera Selatan 2025 (Orang)')
+) |>
+  formatRound(c("TK_2020", "TK_2025"), digits = 0) |>
+  formatRound(c("Growth_Index", "Koef_TK", "Pertumbuhan_TK_Pct", "Pengganda_TK_2025", "TipeI_2025"), digits = 4)
+```
+
+### 8 Export to Excel and CSV
+
+Tabel I-O 2025 diekspor dalam format yang sama dengan berkas input `io` (CSV), sehingga dapat langsung digunakan kembali sebagai input. Workbook Excel memuat tabel I-O, matriks koefisien, invers Leontief, hasil pemeriksaan, konkordansi, dan analisis tenaga kerja. TK 2025 juga disimpan terpisah dalam format `DeskripsiSektor`.
+
+```{r, export, echo = FALSE, warning=FALSE}
 # --- Export to Excel and CSV if paths are provided ---
-  io_export <- data.frame(Kode = rownames(io_table), Deskripsi = io_desc,
-                          round(io_table, 4), check.names = FALSE)
+io_export <- data.frame(io_desc_df, round(io_table, 4), check.names = FALSE)
+colnames(io_export)[1:5] <- trimws(io_desc_header)
 
-  if (!is.null(output_excel_path)) {
-    sheets <- list(
-      "IO_Table_2025"           = io_export,
-      "Technical_Coeffs_A_2025" = data.frame(Sector = rownames(A_1), round(A_1, 6), check.names = FALSE),
-      "Technical_Coeffs_A_2020" = data.frame(Sector = rownames(A_0), round(A_0, 6), check.names = FALSE),
-      "Leontief_Inverse_L_2025" = data.frame(Sector = rownames(L_1), round(L_1, 6), check.names = FALSE),
-      "Margins_Check"           = margins_check,
-      "Balance_Check"           = balance_check,
-      "Concordance"             = concordance
+if (!is.null(output_excel_path)) {
+  sheets <- list(
+    "IO_Table_2025"           = io_export,
+    "Technical_Coeffs_A_2025" = data.frame(Sector = rownames(A_1), round(A_1, 6), check.names = FALSE),
+    "Technical_Coeffs_A_2020" = data.frame(Sector = rownames(A_0), round(A_0, 6), check.names = FALSE),
+    "Leontief_Inverse_L_2025" = data.frame(Sector = rownames(L_1), round(L_1, 6), check.names = FALSE),
+    "Margins_Check"           = margins_check,
+    "Balance_Check"           = balance_check,
+    "Concordance"             = concordance,
+    "Labour_Analysis"         = labour_analysis,
+    "Labour_by_KSM"           = labour_by_ksm,
+    "DeskripsiSektor_2025"    = deskripsi_2025
+  )
+  write_xlsx(sheets, path = output_excel_path)
+  cat("Successfully exported IO table and labour projection to:", output_excel_path, "\n")
+}
+
+if (!is.null(output_csv_path)) {
+  write_io_csv(io_table, io_desc_df, output_csv_path)
+  cat("Successfully exported IO table to:", output_csv_path, "\n")
+}
+
+if (!is.null(output_desk_2025)) {
+  write_xlsx(list(DeskripsiSektor = deskripsi_2025), output_desk_2025)
+  cat("Successfully exported TK 2025 (DeskripsiSektor format) to:", output_desk_2025, "\n")
+}
+```
+
+
+
+## Regional Economy Simulation
+
+Untuk mengestimasi dampak ekonomi dari skenario perubahan tutupan lahan spasial terhadap PDRB regional, penelitian ini menerapkan pendekatan Land-Extended Input-Output (LEIO) yang dikombinasikan dengan Mixed Endogenous-Exogenous Input-Output Model. 
+
+*Catatan: Analisis di bawah ini menggunakan struktur **55 Sektor Tabel I-O Sumatera Selatan Proyeksi 2025**.*
+
+## Data Input and Reading
+
+Terdapat file data input berformat xlsx yang digunakan (pastikan Anda telah menyiapkan data eksternal seperti DeskripsiSektor, LDM, dan Proyeksi Lahan yang strukturnya memuat 55 Sektor Sumsel).
+
+```{r, echo = FALSE, warning=FALSE, message = FALSE}
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(readxl)
+library(DT)
+library(patchwork)
+library(writexl)
+library(plotly)
+library(stringr)
+library(scales) # Untuk format koma angka
+if (!requireNamespace("ggrepel", quietly = TRUE)) {
+  install.packages("ggrepel", repos = "[https://cloud.r-project.org/](https://cloud.r-project.org/)")
+}
+library(ggrepel)
+library(knitr)
+if (!requireNamespace("kableExtra", quietly = TRUE)) {
+  install.packages("kableExtra", repos = "https://cloud.r-project.org/")
+}
+library(kableExtra)
+
+# ==============================================================================
+# BACA DATA TABEL I-O SUMSEL PROYEKSI 2025 (HASIL DARI SKRIP SEBELUMNYA)
+# ==============================================================================
+io <- read.csv("Sumsel_2025_IO_Table.csv", 
+               header=TRUE, 
+               sep=",", 
+               stringsAsFactors = FALSE, 
+               check.names = FALSE,       # Mencegah R menambahkan huruf "X" di depan angka kolom
+               na.strings = c("-", "", " ", "NA"))
+
+# 1. Baca data deskripsi sektor (PASTIKAN BERISI 55 SEKTOR SUMSEL)
+DeskripsiSektor <- read_excel("DeskripsiSektor.xlsx", 
+                                sheet = "DeskripsiSektor", 
+                                col_names = TRUE)
+
+# Baca LDC dan Proyeksi Lahan (Pastikan matriksnya cocok dengan 55 sektor)
+# LDM <- read_excel("LDC.xlsx", sheet = "1", col_names = TRUE)
+# BAULahan <- read_excel("BAU_Lahan.xlsx", sheet = "BAU_Lahan", col_names = TRUE)
+# LASLahan <- read_excel("LAS_Lahan.xlsx", sheet = "LAS_Lahan", col_names = TRUE)
+
+# # Skrip Tambahan (Skenario & Populasi)
+# SType1 <- read_excel("SType1.xlsx", sheet = "SType1", col_names = TRUE)
+# SType2 <- read_excel("SType2.xlsx", sheet = "SType2", col_names = TRUE)
+# SType3 <- read_excel("SType3.xlsx", sheet = "SType3", col_names = TRUE)
+# populasiPenduduk <- read_excel("populasiPenduduk.xlsx", col_names = TRUE)
+# populasiPendudukPesisir <- read_excel("populasiPesisir.xlsx", col_names = TRUE)
+ 
+# ==============================================================================
+# IDENTIFIKASI DINAMIS BARIS & KOLOM I-O SUMSEL
+# ==============================================================================
+jml_sektor   <- 55
+kolom_Sektor <- as.character(1:jml_sektor) # "1", "2", ..., "55"
+
+# PERBAIKAN: Kolom di Sumsel_2025_IO_Table.csv bernama "Nama Sektor" (dengan spasi)
+namaSektor   <- as.vector(io[1:jml_sektor, "Nama Sektor"])
+
+kolom_FD      <- "309" # Total Permintaan Akhir
+kolom_TOutput <- "600" # Total Output BPS
+
+# PERBAIKAN: Mencari indeks baris dinamis dari kolom pertama (Kode I-O)
+baris_impor          <- which(io[[1]] == "200") # Impor / Input Luar Daerah
+baris_upah           <- which(io[[1]] == "201") # Kompensasi Tenaga Kerja
+baris_surplus        <- which(io[[1]] == "202") # Surplus Usaha Bruto
+baris_totInputPrimer <- which(io[[1]] == "209") # Total NTB
+baris_totInput       <- which(io[[1]] == "210") # Total Input
+
+propLuasPesisir <- 0.0595
+tahunDasar <- "2025"
+
+# Asumsi Default Constrained (Jika Kosong): Sektor Pertanian = 1 (Lahan), Sisanya = 0
+if(all(is.na(DeskripsiSektor$Constrained))) {
+  DeskripsiSektor$Constrained <- ifelse(DeskripsiSektor$KSM == "Pertanian, Kehutanan, dan Perikanan", 1, 0)
+}
+Constrained   <- as.matrix(DeskripsiSektor$Constrained)
+
+# Pembacaan matrix Z (Transaksi Antara)
+matrixA <- io %>%
+  slice(1:jml_sektor) %>%       
+  select(all_of(kolom_Sektor))   
+
+Z_prov <- data.matrix(matrixA)
+
+# Total Output Sektor di Provinsi (X_prov)
+X_prov <- as.numeric(io[baris_totInput, kolom_Sektor])
+X_prov[is.na(X_prov) | is.nan(X_prov)] <- 0 
+
+# Matriks Koefisien Teknis Provinsi (A_prov = Z_prov / X_prov)
+inv_X <- ifelse(X_prov > 0, 1 / X_prov, 0)
+A_prov <- sweep(Z_prov, 2, inv_X, FUN = "*")
+A_prov[is.na(A_prov)] <- 0
+
+# Menciptakan matriks identitas (I)
+nA_prov <- nrow(A_prov)
+matrixI <- diag(nA_prov)
+
+# Menghitung Invers Leontief: (I - A)^(-1)
+I_minus_A <- matrixI - A_prov
+Leontief_Inverse <- solve(I_minus_A)
+
+# Kolom final demand
+fd <- as.numeric(io[1:jml_sektor, kolom_FD])
+
+# Perkalian Matriks: X = (I - A)^-1 %*% FD
+matrix_X <- Leontief_Inverse %*% fd
+
+# Proporsi NTB terhadap Total Input
+totInputPrimer <- as.numeric(io[baris_totInputPrimer, kolom_Sektor])
+totInput       <- as.numeric(io[baris_totInput, kolom_Sektor])
+ntbProp        <- totInputPrimer / totInput
+ntbProp[is.na(ntbProp) | is.infinite(ntbProp)] <- 0
+
+# Menghitung land requirement coeff (LRC) dan land productivity coeff (LPC)
+# Lahan2025 <- BAULahan[[tahunDasar]]
+# Lahan2025_diag <- diag(as.numeric(Lahan2025))
+# LDM_matrix <- as.matrix(LDM[, -1]) # Hapus kolom nama jika ada, sesuaikan dgn struktur excel
+# storage.mode(LDM_matrix) <- "double"
+# LR_matrix   <- LDM_matrix %*% Lahan2025_diag
+# LR <- rowSums(LR_matrix, na.rm = TRUE)
+# LRC <- ifelse(fd > 0, LR / fd, 0)
+# LPC <- ifelse(LRC > 0, 1 / LRC, 0)
+```
+
+## Linkages analysis
+
+Analisis keterkaitan sektor digunakan untuk mengetahui seberapa kuat interaksi antarsektor dalam suatu wilayah melalui hubungan input yang dibutuhkan dan output yang dihasilkan. Keterkaitan antarsektor dapat dilihat dari dua arah, yaitu keterkaitan ke belakang (backward linkage) dan keterkaitan ke depan (forward linkage). Semakin tinggi nilai backward linkage, semakin besar ketergantungan suatu sektor terhadap input yang berasal dari sektor-sektor lainnya. Sementara itu, semakin tinggi nilai forward linkage, semakin besar peran output suatu sektor sebagai input bagi sektor-sektor lainnya.
+
+Klasifikasi sektor dalam diagram dilakukan berdasarkan Indeks Daya Penyebaran (backward linkage) dan Indeks Derajat Kepekaan (forward linkage), dengan nilai 1,00 sebagai threshold yang merepresentasikan rata-rata keterkaitan antarsektor. Dengan demikian, sektor dengan nilai indeks lebih dari 1 menunjukkan keterkaitan yang berada di atas rata-rata, sedangkan nilai kurang dari 1 menunjukkan keterkaitan yang berada di bawah rata-rata.
+
+```{r, linkage, echo = FALSE, warning=FALSE}
+# ==============================================================================
+# MENGHITUNG Backward dan Forward Linkage
+# ==============================================================================
+dbl <- colSums(A_prov)
+tbl <- colSums(Leontief_Inverse)
+itbl <- tbl / mean(tbl)
+
+dfl <- rowSums(A_prov)
+tfl <- rowSums(Leontief_Inverse)
+itfl <- tfl / mean(tfl)
+
+tabel_linkage <- data.frame(
+  id_Sektor = kolom_Sektor,
+  nama_Sektor  = namaSektor,
+  TBL = round(tbl, 4),
+  TFL = round(tfl, 4),
+  ITBL = round(itbl, 4),
+  ITFL = round(itfl, 4)
+)
+
+# Pengelompokan Kuadran
+tabel_kuadran <- tabel_linkage %>%
+  mutate(
+    Kuadran = case_when(
+      ITBL > 1 & ITFL > 1  ~ "K1 (BL Tinggi, FL Tinggi)",
+      ITBL > 1 & ITFL <= 1 ~ "K2 (BL Tinggi, FL Rendah)",
+      ITBL <= 1 & ITFL > 1 ~ "K3 (BL Rendah, FL Tinggi)",
+      TRUE               ~ "K4 (BL Rendah, FL Rendah)"
+    ),
+    Kategori = case_when(
+      ITBL > 1 & ITFL > 1  ~ "Sektor Kunci (Key Sector)",
+      ITBL > 1 & ITFL <= 1 ~ "Sektor Pendorong Hulu (Backward-Oriented)",
+      ITBL <= 1 & ITFL > 1 ~ "Sektor Pendukung Hilir (Forward-Oriented)",
+      TRUE               ~ "Sektor Lemah / Terisolasi (Weak Sector)"
     )
-    write_xlsx(sheets, path = output_excel_path)
-    cat("Successfully exported to:", output_excel_path, "\n")
-  }
+  )
 
-  if (!is.null(output_csv_path)) {
-    write.csv(io_export, output_csv_path, row.names = FALSE, na = "")
-    cat("Successfully exported to:", output_csv_path, "\n")
-  }
+# Menggabungkan dengan Deskripsi Sektor eksternal
+# PERBAIKAN: pastikan kolom kunci di DeskripsiSektor bernama "NamaSektor"
+tabel_kuadran <- tabel_kuadran %>%
+  left_join(DeskripsiSektor, by = c("nama_Sektor" = "NamaSektor"))
+
+# 4. VISUALISASI DIAGRAM KUADRAN (MENGGUNAKAN LABELS = NamaPendek)
+p_linkagePendek <- ggplot(tabel_kuadran, aes(x = ITBL, y = ITFL, label = NamaPendek)) +
+  geom_point(aes(color = Kuadran), size = 3) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
+  geom_text_repel(size = 3, max.overlaps = 30, fontface = "bold") +
+  labs(
+    title = "Diagram Kuadran Backward & Forward Linkage Sektor Ekonomi",
+    subtitle = "Garis Merah Putus-putus Menunjukkan Batas Indeks = 1.00",
+    x = "Indeks Total Backward Linkage (ITBL)",
+    y = "Indeks Total Forward Linkage (ITFL)"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    legend.position = "bottom"
+  )
+
+# Tampilkan Plot
+print(p_linkagePendek)
+
+# ==============================================================================
+# ANALISIS LINKAGE BERDASARKAN KATEGORI SEKTOR MAKRO (KSM)
+# ==============================================================================
+# 1. Agregasi Rata-Rata ITBL dan ITFL Berdasarkan Kolom KSM
+tabel_kuadran_ksm <- tabel_kuadran %>%
+  filter(!is.na(KSM) & KSM != "") %>%
+  group_by(KSM) %>%
+  summarise(
+    Mean_ITBL = mean(ITBL, na.rm = TRUE),
+    Mean_ITFL = mean(ITFL, na.rm = TRUE),
+    Jumlah_Sektor_Mikro = n(),
+    .groups = "drop"
+  ) %>%
+  mutate(
+    # Format teks KSM agar wrap jika lebih dari 22 karakter
+    KSM_label = str_wrap(KSM, width = 22),
+    
+    Kuadran = case_when(
+      Mean_ITBL > 1 & Mean_ITFL > 1  ~ "K1 (BL Tinggi, FL Tinggi)",
+      Mean_ITBL > 1 & Mean_ITFL <= 1 ~ "K2 (BL Tinggi, FL Rendah)",
+      Mean_ITBL <= 1 & Mean_ITFL > 1 ~ "K3 (BL Rendah, FL Tinggi)",
+      TRUE                           ~ "K4 (BL Rendah, FL Rendah)"
+    ),
+    Kategori = case_when(
+      Mean_ITBL > 1 & Mean_ITFL > 1  ~ "Sektor Kunci (Key Sector)",
+      Mean_ITBL > 1 & Mean_ITFL <= 1 ~ "Sektor Pendorong Hulu (Backward-Oriented)",
+      Mean_ITBL <= 1 & Mean_ITFL > 1 ~ "Sektor Pendukung Hilir (Forward-Oriented)",
+      TRUE                           ~ "Sektor Terisolasi / Lemah (Weak Sector)"
+    ),
+    Kuadran = factor(Kuadran, levels = c(
+      "K1 (BL Tinggi, FL Tinggi)",
+      "K2 (BL Tinggi, FL Rendah)",
+      "K3 (BL Rendah, FL Tinggi)",
+      "K4 (BL Rendah, FL Rendah)"
+    ))
+  )
+
+# 2. Hitung Batas Range Sumbu Otomatis (Dengan Margin 15% untuk Pelebaran Canvas)
+x_min <- min(tabel_kuadran_ksm$Mean_ITBL, na.rm = TRUE) * 0.85
+x_max <- max(tabel_kuadran_ksm$Mean_ITBL, na.rm = TRUE) * 1.15
+y_min <- min(tabel_kuadran_ksm$Mean_ITFL, na.rm = TRUE) * 0.85
+y_max <- max(tabel_kuadran_ksm$Mean_ITFL, na.rm = TRUE) * 1.15
+
+# 3. Visualisasi Diagram Kuadran Linkage Tingkat KSM (Anti-Overlap)
+p_linkage_ksm <- ggplot(tabel_kuadran_ksm, aes(x = Mean_ITBL, y = Mean_ITFL)) +
+  
+  
+  # Garis Threshold Indeks = 1.00
+  geom_hline(yintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.8) +
+  geom_vline(xintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.8) +
+  
+  # Point Bubble Chart
+  geom_point(aes(color = Kuadran, size = Jumlah_Sektor_Mikro), alpha = 0.85) +
+  
+  # Repel Label Teks Anti-Bertimpa
+  geom_text_repel(
+    aes(label = KSM_label),
+    size                   = 3.2,
+    fontface               = "bold",
+    max.overlaps           = Inf,
+    box.padding            = 0.5,
+    point.padding          = 0.4,
+    segment.color          = "gray40",
+    segment.linewidth      = 0.4,
+    min.segment.length     = 0.1,
+    force                  = 3,
+    force_pull             = 1,
+    lineheight             = 0.9
+  ) +
+  
+  # Kustomisasi Skala Sumbu X & Y dan Warna
+  scale_size_continuous(name = "Jumlah Sektor Mikro", range = c(4, 11)) +
+  scale_color_manual(
+    name = "Klasifikasi Kuadran",
+    values = c(
+      "K1 (BL Tinggi, FL Tinggi)" = "#C62828", # Merah
+      "K2 (BL Tinggi, FL Rendah)" = "#2E7D32", # Hijau
+      "K3 (BL Rendah, FL Tinggi)" = "#00838F", # Cyan Gelap
+      "K4 (BL Rendah, FL Rendah)" = "#8E24AA"  # Ungu
+    )
+  ) +
+  scale_x_continuous(breaks = seq(0.8, 1.4, by = 0.1), limits = c(x_min, x_max)) +
+  scale_y_continuous(breaks = seq(0.8, 2.4, by = 0.2), limits = c(y_min, y_max)) +
+  
+  labs(
+    title    = "Diagram Kuadran Linkage Sektor Ekonomi Berdasarkan KSM",
+    subtitle = "Agregasi Tingkat Klasifikasi Sektor Makro (KSM) PADAGIMO 2024",
+    x        = "Indeks Total Backward Linkage Rata-Rata (ITBL)",
+    y        = "Indeks Total Forward Linkage Rata-Rata (ITFL)"
+  ) +
+  theme_minimal(base_size = 12) +
+  theme(
+    plot.title       = element_text(face = "bold", hjust = 0.5, size = 15, color = "gray20"),
+    plot.subtitle    = element_text(hjust = 0.5, color = "gray40", size = 11),
+    axis.title       = element_text(face = "bold", color = "gray30", size = 11),
+    axis.text        = element_text(color = "gray20"),
+    legend.position  = "bottom",
+    legend.box       = "vertical",
+    legend.title     = element_text(face = "bold", size = 10),
+    legend.text      = element_text(size = 9),
+    panel.grid.minor = element_blank()
+  )
+
+# Tampilkan Plot
+print(p_linkage_ksm)
+
+# 4. Tabel HTML R Markdown (KableExtra Style)
+tabel_kuadran_ksm %>%
+  select(KSM, Jumlah_Sektor_Mikro, Mean_ITBL, Mean_ITFL, Kuadran, Kategori) %>%
+  mutate(
+    Mean_ITBL = number(Mean_ITBL, accuracy = 0.0001),
+    Mean_ITFL = number(Mean_ITFL, accuracy = 0.0001)
+  ) %>%
+  knitr::kable(
+    row.names   = FALSE,
+    caption     = "Tabel Indeks Linkage Agregat Sektor Makro (KSM) PADAGIMO 2024",
+    col.names   = c("Sektor Makro (KSM)", "Jml Sektor", "Rerata ITBL", "Rerata ITFL", "Kuadran", "Klasifikasi Peran"),
+    align       = c("l", "c", "r", "r", "l", "l")
+  ) %>%
+  kable_styling(
+    bootstrap_options = c("striped", "hover", "condensed"),
+    full_width        = TRUE,
+    position          = "center"
+  ) %>%
+  row_spec(0, bold = TRUE, extra_css = "border-top: 2px solid #ccc; border-bottom: 2px solid #ccc;")
+
+# 5. Tabel Interaktif HTML (DT Format)
+df_tabel_kuadran_ksm <- datatable(
+  tabel_kuadran_ksm %>%
+    select(KSM, Jumlah_Sektor_Mikro, Mean_ITBL, Mean_ITFL, Kuadran, Kategori) %>%
+    mutate(
+      Mean_ITBL = round(Mean_ITBL, 4),
+      Mean_ITFL = round(Mean_ITFL, 4)
+    ),
+  caption = "Tabel Interaktif Indeks Linkage Klasifikasi Sektor Makro (KSM) PADAGIMO 2024",
+  colnames = c("Sektor Makro (KSM)", "Jumlah Sektor", "Rerata ITBL", "Rerata ITFL", "Kuadran", "Kategori Strategis"),
+  options = list(pageLength = 10, autoWidth = TRUE)
+)
+
+df_tabel_kuadran_ksm
+
+
+# Simpan Grafik High-Resolution
+ggsave(
+  filename = "linkagePendek.png", 
+  plot     = p_linkagePendek, 
+  width    = 12, 
+  height   = 8.5, 
+  dpi      = 300
+)
+
+ggsave(
+  filename = "linkageKSM.png", 
+  plot     = p_linkage_ksm, 
+  width    = 12, 
+  height   = 8.5, 
+  dpi      = 300
+)
+
+
+```
+
+## Multiplier Analysis
+
+Analisis multiplier digunakan untuk mengetahui besarnya dampak ekonomi yang ditimbulkan oleh perubahan permintaan akhir pada suatu sektor terhadap perekonomian secara keseluruhan. Dampak ekonomi yang dianalisis meliputi output, tenaga kerja, pendapatan, dan kebutuhan impor.
+
+Output multiplier menunjukkan besarnya perubahan total output seluruh sektor yang ditimbulkan oleh adanya perubahan permintaan akhir pada suatu sektor.
+
+Hasil analisis output multiplier di wilayah Sumatera Selatan tahun 2025 menunjukkan bahwa sektor Ketenagalistrikan memiliki nilai output multiplier tertinggi (2,2762), diikuti oleh sektor Industri Makanan dan Minuman (1,8259) dan Industri Karet, Barang dari Karet dan Plastik (1,8153). Nilai output multiplier sektor Ketenagalistrikan sebesar 2,2762 memiliki arti bahwa setiap peningkatan permintaan akhir sebesar Rp1 juta pada sektor tersebut akan mendorong peningkatan output perekonomian secara keseluruhan sebesar sekitar Rp2,27 juta melalui keterkaitan antarsektor.
+
+Dari 15 sektor dengan nilai output multiplier tertinggi, belum terdapat sektor berbasis lahan yang masuk dalam kelompok tersebut (seluruhnya didominasi oleh sektor non-lahan). Hal ini menunjukkan bahwa, berdasarkan struktur keterkaitan input-output Sumatera Selatan proyeksi 2025, sektor industri pengolahan dan jasa (non-lahan) memiliki efek pengganda output yang jauh lebih kuat dibandingkan sektor-sektor berbasis lahan.
+
+```{r, output-multiplier, multiplier, echo = FALSE, warning=FALSE}
+# ==============================================================================
+# MENGHITUNG MULTIPLIERS (OUTPUT, INCOME, LABOUR, IMPORT)
+# TINGKAT SEKTORAL DAN RATA-RATA KSM (SEKTOR MAKRO)
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# PERSIAPAN DATA KOEFISIEN INPUT PRIMER
+# ------------------------------------------------------------------------------
+# Catatan: Sesuaikan indeks baris pada file IO Anda jika berbeda.
+baris_upah  <- baris_upah  # Baris Kompensasi Tenaga Kerja / Gaji & Upah
+baris_impor <- baris_impor  # Baris Impor / Input Luar Daerah
+
+
+# A. Koefisien Pendapatan Langsung (h)
+upah_gaji <- as.numeric(io[baris_upah, kolom_Sektor])
+upah_gaji[is.na(upah_gaji)] <- 0
+h <- upah_gaji / X_prov
+h[is.nan(h) | is.infinite(h)] <- 0
+h_diag <- diag(h)
+
+# B. Koefisien Tenaga Kerja Langsung (w)
+tk_prov <- DeskripsiSektor[, "TenagaKerja"]
+tk_prov[is.na(tk_prov)] <- 0
+w <- tk_prov / X_prov
+w[is.na(w)] <- 0
+w_diag <- diag(unlist(w))
+w <- diag(w_diag)
+
+# C. Koefisien Impor Langsung (m)
+impor <- as.numeric(io[baris_impor, kolom_Sektor])
+impor[is.na(impor)] <- 0
+im <- impor / X_prov
+im[is.nan(im) | is.infinite(im)] <- 0
+im_diag <- diag(im)
+
+
+# ------------------------------------------------------------------------------
+# PERHITUNGAN MULTIPLIER & EFFECT LEVEL 66 SEKTOR (SEKTORAL)
+# ------------------------------------------------------------------------------
+
+# 1) Output Multiplier (Pengganda Output)
+output_mult <- colSums(Leontief_Inverse) # sama dengan TBL
+
+# 2) Income Multiplier & Effect (Pendapatan)
+income_effect <- h_diag %*% Leontief_Inverse
+
+# 3) Labour Multiplier & Effect (Tenaga Kerja)
+labour_effect <- w_diag %*% Leontief_Inverse
+
+# 4) Import Multiplier & Effect (Kebocoran Impor)
+import_effect <- im_diag %*% Leontief_Inverse
+
+# ------------------------------------------------------------------------------
+# PERHITUNGAN DAMPAK TOTAL (EFFECTS) & MULTIPLIER TIPE I
+# ------------------------------------------------------------------------------
+
+# A. Dampak Total (Total Effects per 1 unit Permintaan Akhir)
+tot_income_effect <- as.vector(colSums(h_diag %*% Leontief_Inverse))   # Total Income Effect (Rp/Rp)
+tot_labour_effect <- as.vector(colSums(w_diag %*% Leontief_Inverse))   # Total Labour Effect (Orang/Rp)
+tot_import_effect <- as.vector(colSums(im_diag %*% Leontief_Inverse))  # Total Import Effect (Kebocoran)
+
+# B. Multiplier Tipe I (Rasio Kelipatan terhadap Koefisien Langsung)
+type1_income_mult <- ifelse(h > 0, tot_income_effect / h, 0)
+type1_labour_mult <- ifelse(w > 0, tot_labour_effect / w, 0)
+type1_import_mult <- ifelse(im > 0, tot_import_effect / im, 0)
+
+# ------------------------------------------------------------------------------
+# PENGGABUNGAN KE TABEL KUADRAN SEKTORAL (66 SEKTOR MIKRO)
+# ------------------------------------------------------------------------------
+# Ekstraksi nama KSM dari Kolom D (Kolom ke-5) untuk 66 sektor
+ksm_sektor <- io[1:jml_sektor, 5] #kategori berdasarkan 17 sektor besar, jika pakai 2 digit sektor pakai kolom no 4
+
+# Menambahkan kolom KSM ke tabel_kuadran yang sudah Anda buat
+tabel_kuadran_sektoral <- tabel_kuadran %>%
+  mutate(KSM = ksm_sektor) %>%
+  select(nama_Sektor, KSM, TBL, TFL, ITBL, ITFL, Kuadran, Kategori)
+
+# Menggabungkan Hasil Multiplier Sektoral ke Tabel Kuadran Sektoral
+tabel_multiplier_sektoral <- tabel_kuadran_sektoral %>%
+  mutate(
+    # Koefisien Langsung (Input Primer per Unit Output)
+    Koef_Upah_h          = round(h, 6),
+    Koef_TK_w            = round(w, 6),
+    Koef_Impor_m         = round(im, 6),
+    
+    # Pengganda Output
+    Output_Multiplier    = round(output_mult, 4),
+    
+    # Dampak Total (Total Effects)
+    Income_Effect        = round(tot_income_effect, 4),
+    Labour_Effect        = round(tot_labour_effect, 4),
+    Import_Effect        = round(tot_import_effect, 4),
+    
+    # Multiplier Tipe I (Kelipatan)
+    Income_Multiplier_T1 = round(type1_income_mult, 4),
+    Labour_Multiplier_T1 = round(type1_labour_mult, 4),
+    Import_Multiplier_T1 = round(type1_import_mult, 4)
+  )
+
+# ==============================================================================
+# VISUALISASI MULTIPLIER DENGAN DIFFERENSIASI WARNA SEKTOR LAHAN VS NON-LAHAN
+# ==============================================================================
+
+# 1. Tambahkan informasi penanda Sektor Lahan (Constrained) ke tabel multiplier
+tabel_multiplier_sektoral <- tabel_multiplier_sektoral %>%
+  mutate(
+    Is_Lahan_Raw = DeskripsiSektor$Constrained[1:jml_sektor],
+    Status_Lahan = case_when(
+      Is_Lahan_Raw == 1 ~ "Sektor Berbasis Lahan",
+      TRUE              ~ "Sektor Non-Lahan"
+    ),
+    Status_Lahan = factor(Status_Lahan, levels = c("Sektor Berbasis Lahan", "Sektor Non-Lahan"))
+  )
+
+# 2. Ekstraksi Top 15 Sektor untuk Masing-masing Indikator
+top15_output_lahan <- tabel_multiplier_sektoral %>%
+  arrange(desc(Output_Multiplier)) %>%
+  slice(1:15)
+
+top15_income_lahan <- tabel_multiplier_sektoral %>%
+  arrange(desc(Income_Effect)) %>%
+  slice(1:15)
+
+top15_labour_lahan <- tabel_multiplier_sektoral %>%
+  arrange(desc(Labour_Effect)) %>%
+  slice(1:15)
+
+top15_import_lahan <- tabel_multiplier_sektoral %>%
+  arrange(desc(Import_Effect)) %>%
+  slice(1:15)
+
+# ------------------------------------------------------------------------------
+# A. Plot 1: Top 15 Output Multiplier (Lahan = Hijau | Non-Lahan = Oranye)
+# ------------------------------------------------------------------------------
+p_output_colored <- ggplot(top15_output_lahan, aes(x = reorder(nama_Sektor, Output_Multiplier), y = Output_Multiplier, fill = Status_Lahan)) +
+  geom_col(width = 0.75) +
+  geom_text(aes(label = round(Output_Multiplier, 4)), hjust = -0.15, size = 3) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Sektor Berbasis Lahan" = "#2E7D32", "Sektor Non-Lahan" = "#FFA500")
+  ) +
+  labs(
+    title = "Top 15 Sektor - Output Multiplier",
+    subtitle = "Diferensiasi Sektor Berbasis Lahan vs Sektor Non-Lahan",
+    x = NULL,
+    y = "Output Effect (Juta Rp / Juta Rp)",
+    fill = "Kategori Sektor"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12, color = "#E65100"),
+    axis.text.y = element_text(size = 8.5),
+    legend.position = "bottom"
+  )
+
+# ------------------------------------------------------------------------------
+# B. Plot 2: Top 15 Income Effect (Lahan = Hijau | Non-Lahan = Cokelat)
+# ------------------------------------------------------------------------------
+p_income_colored <- ggplot(top15_income_lahan, aes(x = reorder(nama_Sektor, Income_Effect), y = Income_Effect, fill = Status_Lahan)) +
+  geom_col(width = 0.75) +
+  geom_text(aes(label = round(Income_Effect, 4)), hjust = -0.15, size = 3) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Sektor Berbasis Lahan" = "#2E7D32", "Sektor Non-Lahan" = "#8D6E63") # Cokelat untuk Non-Lahan
+  ) +
+  labs(
+    title = "Top 15 Sektor - Income Effect",
+    subtitle = "Dampak Pendapatan Rumah Tangga per Unit Permintaan Akhir",
+    x = NULL,
+    y = "Income Effect (Juta Rp / Juta Rp)",
+    fill = "Kategori Sektor"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12, color = "#4E342E"),
+    axis.text.y = element_text(size = 8.5),
+    legend.position = "bottom"
+  )
+
+# ------------------------------------------------------------------------------
+# C. Plot 3: Top 15 Labour Effect (Lahan = Hijau | Non-Lahan = Biru)
+# ------------------------------------------------------------------------------
+p_labour_colored <- ggplot(top15_labour_lahan, aes(x = reorder(nama_Sektor, Labour_Effect), y = Labour_Effect, fill = Status_Lahan)) +
+  geom_col(width = 0.75) +
+  geom_text(aes(label = round(Labour_Effect, 4)), hjust = -0.15, size = 3) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Sektor Berbasis Lahan" = "#2E7D32", "Sektor Non-Lahan" = "#1565C0")
+  ) +
+  labs(
+    title = "Top 15 Sektor - Labour Multiplier",
+    subtitle = "Penyerapan Tenaga Kerja per Unit Permintaan Akhir",
+    x = NULL,
+    y = "Labour Effect (Orang / Juta Rp)",
+    fill = "Kategori Sektor"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12, color = "#0D47A1"),
+    axis.text.y = element_text(size = 8.5),
+    legend.position = "bottom"
+  )
+
+# ------------------------------------------------------------------------------
+# D. Plot 4: Top 15 Import Effect (Lahan = Hijau | Non-Lahan = Merah)
+# ------------------------------------------------------------------------------
+p_import_colored <- ggplot(top15_import_lahan, aes(x = reorder(nama_Sektor, Import_Effect), y = Import_Effect, fill = Status_Lahan)) +
+  geom_col(width = 0.75) +
+  geom_text(aes(label = round(Import_Effect, 4)), hjust = -0.15, size = 3) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Sektor Berbasis Lahan" = "#2E7D32", "Sektor Non-Lahan" = "#C62828")
+  ) +
+  labs(
+    title = "Top 15 Sektor - Import Effect (Kebocoran Impor)",
+    subtitle = "Dampak Kebocoran Impor Input per Unit Permintaan Akhir",
+    x = NULL,
+    y = "Import Effect (Juta Rp / Juta Rp)",
+    fill = "Kategori Sektor"
+  ) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.25))) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(face = "bold", size = 12, color = "#B71C1C"),
+    axis.text.y = element_text(size = 8.5),
+    legend.position = "bottom"
+  )
+
+# ------------------------------------------------------------------------------
+# PANGGIL GRAFIK MASING-MASING
+# ------------------------------------------------------------------------------
+
+p_output_colored
+
+# Simpan Grafik High-Resolution
+ggsave(
+  filename = "output.png", 
+  plot     = p_output_colored, 
+  width    = 12, 
+  height   = 8.5, 
+  dpi      = 300
+)
+
+ggsave(
+  filename = "income.png", 
+  plot     = p_income_colored, 
+  width    = 12, 
+  height   = 8.5, 
+  dpi      = 300
+)
+
+
+ggsave(
+  filename = "labor.png", 
+  plot     = p_labour_colored, 
+  width    = 12, 
+  height   = 8.5, 
+  dpi      = 300
+)
+
+
+ggsave(
+  filename = "import.png", 
+  plot     = p_import_colored, 
+  width    = 12, 
+  height   = 8.5, 
+  dpi      = 300
+)
+
+
+```
+
+Analisis labour effect menunjukkan besarnya tambahan tenaga kerja yang terserap sebagai dampak dari peningkatan permintaan akhir pada suatu sektor, baik secara langsung maupun tidak langsung melalui keterkaitan antarsektor. Nilai ini dinyatakan dalam jumlah tenaga kerja yang terserap untuk setiap peningkatan permintaan akhir sebesar Rp1 juta.
+
+Hasil analisis labour effect di Sumatera Selatan menunjukkan bahwa sektor Jasa Pertanian dan Perburuan memiliki efek tertinggi (0,0240), diikuti oleh sektor Kehutanan dan Penebangan Kayu (0,0213) dan Perikanan (0,0212). Nilai 0,0240 bermakna bahwa setiap peningkatan permintaan akhir sebesar Rp1 juta pada sektor tersebut berpotensi meningkatkan penyerapan tenaga kerja sekitar 0,024 orang, atau setara dengan sekitar 24 orang pekerja baru untuk setiap peningkatan permintaan akhir sebanyak Rp1 miliar.
+
+Berbeda dengan hasil output multiplier, sektor berbasis lahan sangat mendominasi penyerapan tenaga kerja. Dari 15 sektor dengan nilai labour effect tertinggi, mayoritas adalah sektor berbasis lahan (seperti tanaman perkebunan, karet, kelapa sawit, pertanian tanaman pangan, dan peternakan). Hal ini menegaskan bahwa sektor berbasis lahan di Sumatera Selatan merupakan tulang punggung utama dalam penciptaan lapangan kerja padat karya.
+
+```{r, labor-multiplier, echo = FALSE, warning=FALSE}
+p_labour_colored
+
+```
+Analisis income effect digunakan untuk mengetahui besarnya dampak peningkatan permintaan akhir suatu sektor terhadap pendapatan rumah tangga (berupa upah/gaji) yang dihasilkan dalam perekonomian.
+
+Hasil analisis di wilayah Sumatera Selatan menunjukkan bahwa sektor Angkutan Rel memiliki nilai income effect tertinggi, yaitu sebesar 0,5913, diikuti oleh Jasa Pendidikan (0,5625) dan Administrasi Pemerintahan, Pertahanan dan Jaminan Sosial Wajib (0,4929). Artinya, setiap peningkatan permintaan akhir sebesar Rp1 juta pada sektor Angkutan Rel akan mendorong peningkatan pendapatan rumah tangga pekerja sekitar Rp591 ribu.
+
+Dari 15 sektor dengan nilai income effect tertinggi, terdapat bauran yang cukup baik dari sektor berbasis lahan, seperti Karet, Tanaman Perkebunan Lainnya, Peternakan, Kelapa Sawit, dan Kehutanan. Hal ini mengindikasikan bahwa sektor-sektor komoditas unggulan Sumatera Selatan (khususnya subsektor perkebunan) tetap memiliki kontribusi yang sangat signifikan dalam mendistribusikan kekayaan dan meningkatkan pendapatan rumah tangga masyarakat di wilayah tersebut.
+
+```{r, income-multiplier, echo = FALSE, warning=FALSE}
+p_income_colored
+
+```
+
+Analisis import effect (efek kebocoran impor) digunakan untuk mengetahui besarnya kebutuhan input impor (baik dari luar negeri maupun luar provinsi) yang timbul akibat peningkatan permintaan akhir pada suatu sektor. Semakin tinggi nilainya, semakin besar potensi kebocoran ekonomi wilayah tersebut.
+
+Hasil analisis import effect di Sumatera Selatan menunjukkan bahwa sektor Industri Alat Angkutan memimpin dengan tingkat kebocoran tertinggi sebesar 0,6368, disusul oleh Industri Mesin dan Perlengkapan YTDL (0,5163) dan Industri Logam Dasar (0,4996). Untuk sektor Industri Alat Angkutan, nilai ini berarti setiap peningkatan permintaan akhir sebesar Rp1 juta akan memunculkan kebutuhan input impor (kebocoran wilayah) sekitar Rp636 ribu. Besarnya nilai ini menunjukkan tingginya ketergantungan sektor-sektor industri berat/manufaktur menengah-atas terhadap bahan baku dari luar Sumatera Selatan.
+
+Dari 15 sektor dengan efek impor tertinggi, tidak terdapat satupun sektor berbasis lahan. Hal ini menjadi indikasi positif bahwa rantai pasok pengembangan sektor berbasis lahan di Sumatera Selatan lebih mandiri dan banyak menggunakan input lokal, sehingga ekspansi pada sektor-sektor lahan ini akan menghasilkan kebocoran ekonomi (impor) yang relatif lebih kecil dibandingkan sektor manufaktur berat.
+
+```{r, import-multiplier, echo = FALSE, warning=FALSE}
+p_import_colored
+
 ```
