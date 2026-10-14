@@ -997,7 +997,7 @@ nThSimulasi <- 20
 tahunSimulasi <- 2026:2045
 idFDThDasar <- "FD2025"
 rangeTahun <- 2025:2045
-kolomSType3 <- 3:ncol(SType3)
+kolomSType3 <- (which(toupper(trimws(names(SType3))) == "TO") + 1):ncol(SType3) # Kolom tahun simulasi (setelah COLUMN, FROM, TO)
 
 thDasar <- 2025
 thAkhir <- 2045
@@ -1883,19 +1883,48 @@ Pengembangan dari GGP-2 dengan menambahkan penguatan rantai nilai komoditas stra
 
 Seluruh asumsi pada GGP2, dipadukan dengan upaya mengurangi ekspor bahan mentah, yang kemudian dialihkan pada proses hilirisasi melalui pengembangan industri hilir dan dan Investasi strategis secara bertahap
 
-```{r, GGP3, echo = FALSE, warning=FALSE}
-SType3 <- as.matrix(SType3)
 
-Export <- as.matrix(io[,kolom_export])
-Export <- Export[1:jml_sektor, , drop = FALSE]
-Export[is.nan(Export)] <- 0
-Export[is.na(Export)] <- 0
+```{r, GGP3update, echo = FALSE, warning=FALSE}
+SType3 <- as.data.frame(SType3)
 
 # ==============================================================================
-# Simulation Script: Modifying Z_prov from Export reallocations
+# Identifikasi kolom SType3: COLUMN | FROM | TO | tahun simulasi
+# ==============================================================================
+namaKolomSType3 <- toupper(trimws(names(SType3)))
+if (!all(c("COLUMN", "FROM", "TO") %in% namaKolomSType3)) {
+  stop("SType3 harus memiliki kolom COLUMN, FROM, dan TO")
+}
+
+kolom_sumber <- trimws(as.character(SType3[[which(namaKolomSType3 == "COLUMN")]])) # Kode kolom IO sumber (mis. "301", "305")
+baris_from   <- as.numeric(SType3[[which(namaKolomSType3 == "FROM")]])            # Row index in IO & Z_prov
+kolom_to     <- as.numeric(SType3[[which(namaKolomSType3 == "TO")]])              # Column index in Z_prov
+
+# Matriks persentase per tahun simulasi (baris = aturan SType3, kolom = tahun)
+pctSType3 <- as.matrix(SType3[, kolomSType3])
+storage.mode(pctSType3) <- "double"
+pctSType3[is.na(pctSType3)] <- 0
+
+# Pengecekan: kode COLUMN harus ada di tabel IO, FROM & TO harus berada di 1..jml_sektor
+kolom_tidak_ada <- setdiff(unique(kolom_sumber), colnames(io))
+if (length(kolom_tidak_ada) > 0) {
+  stop("Kode COLUMN pada SType3 tidak ditemukan di tabel IO: ", paste(kolom_tidak_ada, collapse = ", "))
+}
+if (any(is.na(baris_from) | baris_from < 1 | baris_from > jml_sektor |
+        is.na(kolom_to)   | kolom_to   < 1 | kolom_to   > jml_sektor)) {
+  stop("Nilai FROM / TO pada SType3 harus berada di antara 1 dan ", jml_sektor)
+}
+
+# Ekstraksi kolom sumber dari tabel IO (sektor 1..jml_sektor) sesuai kode COLUMN
+SourceIO <- as.matrix(io[1:jml_sektor, unique(kolom_sumber), drop = FALSE])
+storage.mode(SourceIO) <- "double"
+SourceIO[is.nan(SourceIO)] <- 0
+SourceIO[is.na(SourceIO)] <- 0
+
+# ==============================================================================
+# Simulation Script: Modifying Z_prov from IO column reallocations (COLUMN in SType3)
 # ==============================================================================
 
-# Number of simulation years (Columns 3 to 22 = 20 years)
+# Number of simulation years (year columns after COLUMN, FROM, TO)
 sim_cols <- kolomSType3
 num_years <- length(sim_cols)
 
@@ -1905,23 +1934,23 @@ names(Z_sim_list) <- paste0("Year_", 1:num_years)
 
 # Run simulation across all 20 years
 for (t in seq_along(sim_cols)) {
-  col_idx <- sim_cols[t]  # Current SType3 column (3, 4, ..., 22)
 
   # 1. Initialize a copy of the baseline Z_prov matrix for year t
   Z_temp <- Z_prov
 
   # 2. Iterate through each rule/row in SType3
   for (i in 1:nrow(SType3)) {
-    r_target <- SType3[i, 1]  # Row index in Export & Z_prov
-    c_target <- SType3[i, 2]  # Column index in Z_prov
-    pct_val  <- SType3[i, col_idx] # Percentage value for Year t
+    r_target <- baris_from[i]    # Row index in SourceIO & Z_prov
+    c_target <- kolom_to[i]      # Column index in Z_prov
+    c_source <- kolom_sumber[i]  # IO column code to extract from (e.g. "301", "305")
+    pct_val  <- pctSType3[i, t]  # Percentage value for Year t
 
     # Check if percentages are written as 0-100 (e.g., 10%) or 0-1 (e.g., 0.10)
     # If values in SType3 are whole percentages (e.g. 5, 10, 25), divide by 100:
     pct_factor <- ifelse(pct_val > 1, pct_val / 100, pct_val)
 
-    # 3. Calculate reallocation amount from Export
-    delta <- Export[r_target, 1] * pct_factor
+    # 3. Calculate reallocation amount from the selected IO column
+    delta <- SourceIO[r_target, c_source] * pct_factor
 
     # 4. Add difference to the target cell in Z_prov
     Z_temp[r_target, c_target] <- Z_temp[r_target, c_target] + delta
