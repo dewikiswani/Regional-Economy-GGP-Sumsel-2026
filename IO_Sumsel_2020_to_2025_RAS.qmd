@@ -1,6 +1,11 @@
 ---
 title: "Proyeksi Tabel I-O Sumatera Selatan 2020 ke 2025 dengan Metode RAS serta Proyeksi Tenaga Kerja Sektoral 2025 [Land4Lives]"
-format: html
+format: 
+  html:
+    toc: true
+    toc_float: true
+    toc-depth: 3
+    toc-location: left
 editor: visual
 ---
 
@@ -974,41 +979,44 @@ populasiPenduduk <- read_excel("populasiPenduduk.xlsx", col_names = TRUE)
 # ==============================================================================
 # IDENTIFIKASI DINAMIS BARIS & KOLOM I-O SUMSEL
 # ==============================================================================
-jml_sektor   <- 55
+jml_sektor   <- nrow(DeskripsiSektor)
 kolom_Sektor <- as.character(1:jml_sektor) # "1", "2", ..., "55"
 
 # PERBAIKAN: Kolom di Sumsel_2025_IO_Table.csv bernama "Nama Sektor" (dengan spasi)
 namaSektor   <- as.vector(io[1:jml_sektor, "Nama Sektor"])
 
+
+# PERBAIKAN: Mencari indeks baris dan kolom (Kode I-O)
 kolom_FD      <- "309" # Total Permintaan Akhir
 kolom_TOutput <- "600" # Total Output BPS
 kolom_export <- "305" 
-
-# PERBAIKAN: Mencari indeks baris dinamis dari kolom pertama (Kode I-O)
 baris_impor          <- which(io[[1]] == "200") # Impor / Input Luar Daerah
 baris_upah           <- which(io[[1]] == "201") # Kompensasi Tenaga Kerja
 baris_surplus        <- which(io[[1]] == "202") # Surplus Usaha Bruto
 baris_totInputPrimer <- which(io[[1]] == "209") # Total NTB
 baris_totInput       <- which(io[[1]] == "210") # Total Input
 
-propLuasPesisir <- 0.0595
-tahunDasar <- "2025"
 nThSimulasi <- 20
-tahunSimulasi <- 2026:2045
-idFDThDasar <- "FD2025"
-rangeTahun <- 2025:2045
-kolomSType3 <- (which(toupper(trimws(names(SType3))) == "TO") + 1):ncol(SType3) # Kolom tahun simulasi (setelah COLUMN, FROM, TO)
-
 thDasar <- 2025
 thAkhir <- 2045
+tahunSimulasi <- 2026:2045
+rangeTahun <- 2025:2045
+tahunDasar <- "2025"
+idFDThDasar <- "FD2025"
+kolomSType3 <- (which(toupper(trimws(names(SType3))) == "TO") + 1):ncol(SType3) # Kolom tahun simulasi (setelah COLUMN, FROM, TO)
+
+
 Unconstrained <- as.matrix(DeskripsiSektor$Unconstrained)
 Constrained <- as.matrix(DeskripsiSektor$Constrained)
 
-# Asumsi Default Constrained (Jika Kosong): Sektor Pertanian = 1 (Lahan), Sisanya = 0
-if(all(is.na(DeskripsiSektor$Constrained))) {
-  DeskripsiSektor$Constrained <- ifelse(DeskripsiSektor$KSM == "Pertanian, Kehutanan, dan Perikanan", 1, 0)
-}
-Constrained   <- as.matrix(DeskripsiSektor$Constrained)
+```
+
+```{r, deskripsiAnalisis, echo = FALSE, warning=FALSE, message = FALSE}
+
+# ==============================================================================
+# Deskripsi analisis
+# ==============================================================================
+
 
 # Pembacaan matrix Z (Transaksi Antara)
 matrixA <- io %>%
@@ -2243,7 +2251,7 @@ p_bar_growth <- ggplot(df_bar_chart, aes(x = Kelompok, y = Growth, fill = Skenar
   # --- Skala & Kustomisasi Warna ---
   scale_y_continuous(
     labels = function(x) paste0(format(x, nsmall = 1), "%"),
-    limits = c(1.5, 4.5), # Rentang sumbu Y mirip contoh gambar
+    limits = c(1.5, 8.5), # Rentang sumbu Y mirip contoh gambar
     oob = rescale_none
   ) +
   scale_fill_manual(
@@ -2460,7 +2468,145 @@ knitr::kable(
 
 ```
 
+## PDRB sektor lahan
 
+```{r, pdrbLahan, echo = FALSE, warning=FALSE}
+# ==============================================================================
+# PROYEKSI PDRB KHUSUS SEKTOR LAHAN (CONSTRAINED = 1)
+# ==============================================================================
+
+# 1. Membuat Dataframe Khusus PDRB Sektor Lahan
+plot_df_lahan <- data.frame(
+  Year = rangeTahun,
+  pdrb_BAU_Lahan = res_BAU$LAS,
+  pdrb_LAS1B_Lahan = res_LAS1$LAS,     # Skenario GGP-1B
+  pdrb_LAS12_Lahan = res_LAS12$LAS,    # Skenario GGP-2
+  pdrb_LAS123_Lahan = res_LAS123$LAS   # Skenario GGP-3
+)
+
+# Ekspor tabel ke Excel jika diperlukan
+write_xlsx(plot_df_lahan, "Final_PDRB_Khusus_Lahan_Sumsel.xlsx")
+
+# 2. Menampilkan Tabel PDRB Sektor Lahan
+knitr::kable(
+  plot_df_lahan,
+  row.names = FALSE,
+  caption = "PDRB Khusus Sektor Berbasis Lahan Sumatera Selatan (Juta Rupiah)",
+  digits = 2,
+  format.args = list(big.mark = ","),
+  col.names = c("Tahun", "BAU", "GGP-1B", "GGP-2", "GGP-3"),
+  align = c("c", "r", "r", "r", "r")
+) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE, position = "center") %>%
+  kableExtra::row_spec(0, bold = TRUE, extra_css = "border-top: 2px solid #ccc; border-bottom: 2px solid #ccc;")
+
+# ==============================================================================
+# VISUALISASI GRAFIK PDRB KHUSUS SEKTOR LAHAN (EXCEL STYLE)
+# ==============================================================================
+
+# Ambil nilai awal dan akhir untuk callout label
+val_lahan_2025 <- plot_df_lahan$pdrb_BAU_Lahan[plot_df_lahan$Year == 2025]
+val_lahan_bau_2045 <- plot_df_lahan$pdrb_BAU_Lahan[plot_df_lahan$Year == 2045]
+val_lahan_ggp3_2045 <- plot_df_lahan$pdrb_LAS123_Lahan[plot_df_lahan$Year == 2045]
+
+# Format label
+lbl_lahan_2025 <- comma(val_lahan_2025)
+lbl_lahan_bau_2045 <- comma(val_lahan_bau_2045)
+lbl_lahan_ggp3_2045 <- comma(val_lahan_ggp3_2045)
+
+# Perhitungan offset untuk estetika grafik
+y_min_lahan <- min(plot_df_lahan[-1])
+y_max_lahan <- max(plot_df_lahan[-1])
+y_range_lahan <- y_max_lahan - y_min_lahan
+offset_lahan <- y_range_lahan * 0.08
+
+# Plot Grafik Sektor Lahan
+p_pdrb_lahan <- ggplot(plot_df_lahan, aes(x = Year)) +
+  geom_line(aes(y = pdrb_BAU_Lahan, color = "BAU"), linewidth = 1.1) +
+  geom_point(aes(y = pdrb_BAU_Lahan, color = "BAU"), size = 2.5) +
+  
+  geom_line(aes(y = pdrb_LAS1B_Lahan, color = "GGP-1B"), linewidth = 1.1) +
+  geom_point(aes(y = pdrb_LAS1B_Lahan, color = "GGP-1B"), size = 2.5) +
+  
+  geom_line(aes(y = pdrb_LAS12_Lahan, color = "GGP-2"), linewidth = 1.1) +
+  geom_point(aes(y = pdrb_LAS12_Lahan, color = "GGP-2"), size = 2.5) +
+  
+  geom_line(aes(y = pdrb_LAS123_Lahan, color = "GGP-3"), linewidth = 1.1) +
+  geom_point(aes(y = pdrb_LAS123_Lahan, color = "GGP-3"), size = 2.5) +
+  
+  # Garis Callout
+  annotate("segment", x = 2025.2, xend = 2026.8, y = val_lahan_2025, yend = val_lahan_2025 + offset_lahan, color = "gray40", linewidth = 0.6) +
+  annotate("segment", x = 2044.8, xend = 2042.8, y = val_lahan_ggp3_2045, yend = val_lahan_ggp3_2045 + offset_lahan, color = "gray40", linewidth = 0.6) +
+  annotate("segment", x = 2044.8, xend = 2043.2, y = val_lahan_bau_2045, yend = val_lahan_bau_2045 - offset_lahan, color = "gray40", linewidth = 0.6) +
+  
+  # Kotak Label Callout
+  annotate("label", x = 2027.5, y = val_lahan_2025 + offset_lahan + (y_range_lahan * 0.02), label = lbl_lahan_2025,
+           fontface = "bold", fill = "#EAEAEA", color = "black", size = 4, label.padding = unit(0.4, "lines")) +
+  annotate("label", x = 2042.0, y = val_lahan_ggp3_2045 + offset_lahan + (y_range_lahan * 0.02), label = lbl_lahan_ggp3_2045,
+           fontface = "bold", fill = "#EAEAEA", color = "black", size = 4, label.padding = unit(0.4, "lines")) +
+  annotate("label", x = 2042.5, y = val_lahan_bau_2045 - offset_lahan - (y_range_lahan * 0.02), label = lbl_lahan_bau_2045,
+           fontface = "bold", fill = "#EAEAEA", color = "black", size = 4, label.padding = unit(0.4, "lines")) +
+
+  scale_color_manual(
+    name = "Skenario",
+    values = c("BAU" = "#4178BE", "GGP-1B" = "#00AEF2", "GGP-2" = "#E7298A", "GGP-3" = "#7570B3")
+  ) +
+  scale_x_continuous(breaks = seq(2025, 2045, by = 5), limits = c(2024, 2046)) +
+  scale_y_continuous(labels = comma_format()) +
+  labs(
+    title = "Proyeksi PDRB Khusus Sektor Lahan 2025–2045",
+    x = "Tahun",
+    y = "PDRB Sektor Lahan (Juta Rupiah)"
+  ) +
+  theme_minimal(base_size = 13) +
+  theme(
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 15),
+    panel.grid.minor = element_blank()
+  )
+
+print(p_pdrb_lahan)
+
+# ==============================================================================
+# TABEL PERBANDINGAN PDRB SEKTOR LAHAN TAHUN 2045
+# ==============================================================================
+
+# Perhitungan CAGR Khusus Sektor Lahan
+cagr_lahan_bau <- ((val_lahan_bau_2045 / val_lahan_2025)^(1 / 20) - 1) * 100
+cagr_lahan_ggp3 <- ((val_lahan_ggp3_2045 / val_lahan_2025)^(1 / 20) - 1) * 100
+persen_kenaikan_lahan <- ((val_lahan_ggp3_2045 - val_lahan_bau_2045) / val_lahan_bau_2045) * 100
+
+df_perbandingan_lahan <- data.frame(
+  Indikator = c(
+    "PDRB Sektor Lahan BAU 2045",
+    "PDRB Sektor Lahan GGP-3 2045",
+    "Selisih Tambahan PDRB Sektor Lahan (Juta Rp)",
+    "Persentase Kenaikan dibanding BAU (%)",
+    "Rerata Laju Pertumbuhan (CAGR) Lahan BAU",
+    "Rerata Laju Pertumbuhan (CAGR) Lahan GGP-3"
+  ),
+  Nilai = c(
+    sprintf("Rp %s Juta", comma(val_lahan_bau_2045)),
+    sprintf("Rp %s Juta", comma(val_lahan_ggp3_2045)),
+    sprintf("Rp %s Juta", comma(val_lahan_ggp3_2045 - val_lahan_bau_2045)),
+    sprintf("+%.2f%%", persen_kenaikan_lahan),
+    sprintf("%.2f%% per tahun", cagr_lahan_bau),
+    sprintf("%.2f%% per tahun", cagr_lahan_ggp3)
+  )
+)
+
+knitr::kable(
+  df_perbandingan_lahan,
+  row.names = FALSE,
+  caption = "Perbandingan PDRB Khusus Sektor Lahan (BAU vs GGP-3) Tahun 2045",
+  col.names = c("Parameter Indikator", "Nilai Simulasi"),
+  align = c("l", "r")
+) %>%
+  kableExtra::kable_styling(bootstrap_options = c("striped", "hover", "condensed"), full_width = FALSE, position = "center") %>%
+  kableExtra::row_spec(0, bold = TRUE, extra_css = "border-top: 2px solid #ccc; border-bottom: 2px solid #ccc;") %>%
+  kableExtra::row_spec(4, bold = TRUE, background = "#EAEAEA")
+
+```
 
 ## Total Keuntungan Usaha
 
