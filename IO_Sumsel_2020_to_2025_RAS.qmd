@@ -1072,7 +1072,7 @@ Analisis keterkaitan sektor digunakan untuk mengetahui seberapa kuat interaksi a
 
 Klasifikasi sektor dalam diagram dilakukan berdasarkan Indeks Daya Penyebaran (backward linkage) dan Indeks Derajat Kepekaan (forward linkage), dengan nilai 1,00 sebagai threshold yang merepresentasikan rata-rata keterkaitan antarsektor. Dengan demikian, sektor dengan nilai indeks lebih dari 1 menunjukkan keterkaitan yang berada di atas rata-rata, sedangkan nilai kurang dari 1 menunjukkan keterkaitan yang berada di bawah rata-rata.
 
-```{r, linkage, echo = FALSE, warning=FALSE}
+```{r, linkage, echo = FALSE, warning=FALSE, fig.width=16, fig.height=9, out.width="100%"}
 # ==============================================================================
 # MENGHITUNG Backward dan Forward Linkage
 # ==============================================================================
@@ -1116,25 +1116,52 @@ tabel_kuadran <- tabel_kuadran %>%
   left_join(DeskripsiSektor, by = c("nama_Sektor" = "NamaSektor"))
 
 # 4. VISUALISASI DIAGRAM KUADRAN (MENGGUNAKAN LABELS = NamaPendek)
+# Hitung batas dinamis untuk memperlebar kanvas (Margin 15-20%)
+# Melebarkan batas sumbu X dan Y lebih jauh (Margin 20-25%) untuk ruang label PPT
+x_min_pendek <- min(tabel_kuadran$ITBL, na.rm = TRUE) * 0.75
+x_max_pendek <- max(tabel_kuadran$ITBL, na.rm = TRUE) * 1.25
+y_min_pendek <- min(tabel_kuadran$ITFL, na.rm = TRUE) * 0.75
+y_max_pendek <- max(tabel_kuadran$ITFL, na.rm = TRUE) * 1.25
+
 p_linkagePendek <- ggplot(tabel_kuadran, aes(x = ITBL, y = ITFL, label = NamaPendek)) +
-  geom_point(aes(color = Kuadran), size = 3) +
-  geom_hline(yintercept = 1, linetype = "dashed", color = "red") +
-  geom_vline(xintercept = 1, linetype = "dashed", color = "red") +
-  geom_text_repel(size = 3, max.overlaps = 30, fontface = "bold") +
+  # Memperbesar ukuran titik agar terlihat di PPT
+  geom_point(aes(color = Kuadran), size = 4, alpha = 0.85) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red", linewidth = 0.8) +
+  geom_vline(xintercept = 1, linetype = "dashed", color = "red", linewidth = 0.8) +
+  
+  # Pengaturan Label Anti-Overlap Khusus Font Besar
+  geom_text_repel(
+    size               = 4.5,       # Font diperbesar (sekitar 12-14pt di PPT)
+    fontface           = "bold",
+    max.overlaps       = Inf,       # Jangan sembunyikan teks
+    box.padding        = 0.9,       # Jarak kotak antar teks lebih lebar
+    point.padding      = 0.5,       # Jarak teks dari titik dijauhkan sedikit
+    force              = 20,        # Daya tolak sangat kuat agar menyebar
+    segment.color      = "gray40",
+    segment.linewidth  = 0.5,       # Garis penunjuk sedikit ditebalkan
+    min.segment.length = 0        # Paksa garis penunjuk selalu muncul jika label bergeser
+  ) +
+  
+  scale_x_continuous(limits = c(x_min_pendek, x_max_pendek)) +
+  scale_y_continuous(limits = c(y_min_pendek, y_max_pendek)) +
+  
   labs(
     title = "Diagram Kuadran Backward & Forward Linkage Sektor Ekonomi",
     subtitle = "Garis Merah Putus-putus Menunjukkan Batas Indeks = 1.00",
     x = "Indeks Total Backward Linkage (ITBL)",
     y = "Indeks Total Forward Linkage (ITFL)"
   ) +
-  theme_minimal() +
+  # base_size = 16 membuat semua teks sumbu (axis) dan legenda otomatis membesar
+  theme_minimal(base_size = 16) +
   theme(
-    plot.title = element_text(face = "bold", hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5),
-    legend.position = "bottom"
+    plot.title = element_text(face = "bold", hjust = 0.5, size = 20),
+    plot.subtitle = element_text(hjust = 0.5, size = 14, color = "gray30"),
+    legend.position = "bottom",
+    legend.title = element_blank(),
+    legend.text = element_text(size = 12),
+    panel.grid.minor = element_blank()
   )
 
-# Tampilkan Plot
 print(p_linkagePendek)
 
 # ==============================================================================
@@ -1175,51 +1202,45 @@ tabel_kuadran_ksm <- tabel_kuadran %>%
   )
 
 # 2. Hitung Batas Range Sumbu Otomatis (Dengan Margin 15% untuk Pelebaran Canvas)
-x_min <- min(tabel_kuadran_ksm$Mean_ITBL, na.rm = TRUE) * 0.85
-x_max <- max(tabel_kuadran_ksm$Mean_ITBL, na.rm = TRUE) * 1.15
-y_min <- min(tabel_kuadran_ksm$Mean_ITFL, na.rm = TRUE) * 0.85
-y_max <- max(tabel_kuadran_ksm$Mean_ITFL, na.rm = TRUE) * 1.15
+x_min <- min(tabel_kuadran_ksm$Mean_ITBL, na.rm = TRUE) * 0.75
+x_max <- max(tabel_kuadran_ksm$Mean_ITBL, na.rm = TRUE) * 1.25
+y_min <- min(tabel_kuadran_ksm$Mean_ITFL, na.rm = TRUE) * 0.75
+y_max <- max(tabel_kuadran_ksm$Mean_ITFL, na.rm = TRUE) * 1.25
 
-# 3. Visualisasi Diagram Kuadran Linkage Tingkat KSM (Anti-Overlap)
 p_linkage_ksm <- ggplot(tabel_kuadran_ksm, aes(x = Mean_ITBL, y = Mean_ITFL)) +
+  geom_hline(yintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.9) +
+  geom_vline(xintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.9) +
   
-  
-  # Garis Threshold Indeks = 1.00
-  geom_hline(yintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.8) +
-  geom_vline(xintercept = 1.0, linetype = "dashed", color = "red", linewidth = 0.8) +
-  
-  # Point Bubble Chart
   geom_point(aes(color = Kuadran, size = Jumlah_Sektor_Mikro), alpha = 0.85) +
   
-  # Repel Label Teks Anti-Bertimpa
   geom_text_repel(
     aes(label = KSM_label),
-    size                   = 3.2,
-    fontface               = "bold",
-    max.overlaps           = Inf,
-    box.padding            = 0.5,
-    point.padding          = 0.4,
-    segment.color          = "gray40",
-    segment.linewidth      = 0.4,
-    min.segment.length     = 0.1,
-    force                  = 3,
-    force_pull             = 1,
-    lineheight             = 0.9
+    size               = 4.5,       # Font besar untuk PPT
+    fontface           = "bold",
+    max.overlaps       = Inf,
+    box.padding        = 1.0,       # Padding lebih ekstrim karena gelembung (bubble) cukup besar
+    point.padding      = 0.6,
+    segment.color      = "gray40",
+    segment.linewidth  = 0.5,
+    min.segment.length = 0,
+    force              = 20,
+    lineheight         = 0.9
   ) +
   
-  # Kustomisasi Skala Sumbu X & Y dan Warna
-  scale_size_continuous(name = "Jumlah Sektor Mikro", range = c(4, 11)) +
+  # Ukuran Bubble diperbesar agar proporsional dengan font
+  scale_size_continuous(name = "Jumlah Sektor Mikro", range = c(5, 15)) +
   scale_color_manual(
     name = "Klasifikasi Kuadran",
     values = c(
-      "K1 (BL Tinggi, FL Tinggi)" = "#C62828", # Merah
-      "K2 (BL Tinggi, FL Rendah)" = "#2E7D32", # Hijau
-      "K3 (BL Rendah, FL Tinggi)" = "#00838F", # Cyan Gelap
-      "K4 (BL Rendah, FL Rendah)" = "#8E24AA"  # Ungu
+      "K1 (BL Tinggi, FL Tinggi)" = "#C62828", 
+      "K2 (BL Tinggi, FL Rendah)" = "#2E7D32", 
+      "K3 (BL Rendah, FL Tinggi)" = "#00838F", 
+      "K4 (BL Rendah, FL Rendah)" = "#8E24AA"  
     )
   ) +
-  scale_x_continuous(breaks = seq(0.8, 1.4, by = 0.1), limits = c(x_min, x_max)) +
-  scale_y_continuous(breaks = seq(0.8, 2.4, by = 0.2), limits = c(y_min, y_max)) +
+  
+  scale_x_continuous(limits = c(x_min, x_max)) +
+  scale_y_continuous(limits = c(y_min, y_max)) +
   
   labs(
     title    = "Diagram Kuadran Linkage Sektor Ekonomi Berdasarkan KSM",
@@ -1227,21 +1248,23 @@ p_linkage_ksm <- ggplot(tabel_kuadran_ksm, aes(x = Mean_ITBL, y = Mean_ITFL)) +
     x        = "Indeks Total Backward Linkage Rata-Rata (ITBL)",
     y        = "Indeks Total Forward Linkage Rata-Rata (ITFL)"
   ) +
-  theme_minimal(base_size = 12) +
+  theme_minimal(base_size = 16) +
   theme(
-    plot.title       = element_text(face = "bold", hjust = 0.5, size = 15, color = "gray20"),
-    plot.subtitle    = element_text(hjust = 0.5, color = "gray40", size = 11),
-    axis.title       = element_text(face = "bold", color = "gray30", size = 11),
-    axis.text        = element_text(color = "gray20"),
+    plot.title       = element_text(face = "bold", hjust = 0.5, size = 20, color = "gray20"),
+    plot.subtitle    = element_text(hjust = 0.5, color = "gray40", size = 14),
+    axis.title       = element_text(face = "bold", color = "gray30", size = 14),
     legend.position  = "bottom",
     legend.box       = "vertical",
-    legend.title     = element_text(face = "bold", size = 10),
-    legend.text      = element_text(size = 9),
+    legend.title     = element_text(face = "bold", size = 13),
+    legend.text      = element_text(size = 12),
     panel.grid.minor = element_blank()
   )
 
-# Tampilkan Plot
 print(p_linkage_ksm)
+
+# ==============================================================================
+# GGSAVE graphic
+# ==============================================================================
 
 # 4. Tabel HTML R Markdown (KableExtra Style)
 tabel_kuadran_ksm %>%
@@ -1279,24 +1302,43 @@ df_tabel_kuadran_ksm <- datatable(
 df_tabel_kuadran_ksm
 
 
-# Simpan Grafik High-Resolution
+# Simpan Grafik High-Resolution (Width diperlebar dan background diset putih)
 ggsave(
   filename = "linkagePendek.png", 
   plot     = p_linkagePendek, 
-  width    = 12, 
+  width    = 14,              # Diperlebar dari 12 menjadi 14
   height   = 8.5, 
-  dpi      = 300
+  dpi      = 300,
+  bg       = "white"          # Memastikan background tidak transparan/hitam
 )
 
 ggsave(
   filename = "linkageKSM.png", 
   plot     = p_linkage_ksm, 
-  width    = 12, 
+  width    = 14,              # Diperlebar dari 12 menjadi 14
   height   = 8.5, 
-  dpi      = 300
+  dpi      = 300,
+  bg       = "white"          # Memastikan background tidak transparan/hitam
 )
 
+# Simpan Grafik High-Resolution (Format Widescreen 16:9)
+ggsave(
+  filename = "linkagePendek_PPT.png", 
+  plot     = p_linkagePendek, 
+  width    = 16,              # Lebar untuk widescreen 16:9
+  height   = 9,               # Tinggi proporsional
+  dpi      = 300,
+  bg       = "white"
+)
 
+ggsave(
+  filename = "linkageKSM_PPT.png", 
+  plot     = p_linkage_ksm, 
+  width    = 16, 
+  height   = 9, 
+  dpi      = 300,
+  bg       = "white"
+)
 # ==============================================================================
 # EKSPOR HASIL ANALISIS LINKAGE KE EXCEL DAN CSV
 # ==============================================================================
